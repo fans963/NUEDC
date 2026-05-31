@@ -1,0 +1,47 @@
+{
+    "version": 6,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 22,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "native",
+            "displayName": "Native (x86_64, host compiler)",
+            "description": "Build for the local machine using system GCC 16",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/native",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "VCPKG_TARGET_TRIPLET": "native-gcc16",
+                "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/triplets",
+                "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+            }
+        },
+        {
+            "name": "cross-aarch64",
+            "displayName": "Cross (aarch64, Cortex-A72)",
+            "description": "Cross-compile for aarch64 target board (Raspberry Pi 4 etc.)",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/aarch64",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "VCPKG_TARGET_TRIPLET": "aarch64-native-gcc16",
+                "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/triplets",
+                "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+                "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/toolchains/aarch64-gcc16.toolchain.cmake"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "native",
+            "configurePreset": "native"
+        },
+        {
+            "name": "cross-aarch64",
+            "configurePreset": "cross-aarch64"
+        }
+    ]
+}

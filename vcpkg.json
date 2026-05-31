@@ -1,0 +1,28 @@
+{
+  "name": "nuedc",
+  "version-string": "1.0.0",
+  "dependencies": [
+    "eigen3",
+    "spdlog",
+    "ryml",
+    "mp-units",
+    "hfsm2",
+    "magic-enum",
+    "mimalloc",
+    "flatbuffers",
+    {
+      "name": "libusb",
+      "default-features": false
+    },
+    {
+      "name": "opencv4",
+      "default-features": false,
+      "features": [
+        "thread",
+        "intrinsics",
+        "jpeg",
+        "png"
+      ]
+    }
+  ]
+}

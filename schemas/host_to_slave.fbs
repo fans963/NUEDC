@@ -1,0 +1,93 @@
+namespace Protocol.HostToSlave;
+
+// ── Motor / actuator commands ──────────────────────────────────────────
+
+table MotorCommandPack {
+    motor_id: uint8;
+    target_speed_rad_s: float;
+}
+
+// ── PID configuration ──────────────────────────────────────────────────
+
+table PidConfigPack {
+    controller_id: uint8;
+    kp: float;
+    ki: float;
+    kd: float;
+    output_min: float;
+    output_max: float;
+    integral_min: float;
+    integral_max: float;
+    reset: bool;
+}
+
+// ── Peripheral passthrough ─────────────────────────────────────────────
+
+table CanPack {
+    can_idx: uint8;
+    can_id: uint32;
+    can_dlc: uint8;
+    is_extended: bool;
+    is_rtr: bool;
+    tx_data: [ubyte];
+}
+
+table UartPack {
+    uart_idx: uint8;
+    tx_data: [ubyte];
+}
+
+table I2cWritePack {
+    i2c_idx: uint8;
+    device_addr: uint16;
+    register_addr: uint8;
+    data: [ubyte];
+}
+
+table I2cReadRequestPack {
+    i2c_idx: uint8;
+    device_addr: uint16;
+    register_addr: uint8;
+    read_length: uint16;
+}
+
+table SpiTransferPack {
+    spi_idx: uint8;
+    tx_data: [ubyte];
+    read_length: uint16;
+}
+
+// ── Encoder configuration ──────────────────────────────────────────────
+
+table EncoderConfigPack {
+    encoder_id: uint8;
+    lines_per_rev: uint16;    // 编码器线数（PPR）
+}
+
+// ── Configuration ──────────────────────────────────────────────────────
+
+table GpioConfigPack {
+    pin: uint8;
+    mode: uint8;      // 0=input, 1=output, 2=alternate
+    value: bool;
+}
+
+// ── Frame ──────────────────────────────────────────────────────────────
+
+union MsgPayload {
+    CanPack,
+    UartPack,
+    MotorCommandPack,
+    PidConfigPack,
+    I2cWritePack,
+    I2cReadRequestPack,
+    SpiTransferPack,
+    GpioConfigPack,
+    EncoderConfigPack,
+}
+
+table HostToSlaveFrame {
+    payload: MsgPayload;
+}
+
+root_type HostToSlaveFrame;

@@ -1,0 +1,77 @@
+namespace Protocol.SlaveToHost;
+
+// ── Sensor data ────────────────────────────────────────────────────────
+
+table ImuPack {
+    accel_x: float;
+    accel_y: float;
+    accel_z: float;
+    gyro_x: float;
+    gyro_y: float;
+    gyro_z: float;
+}
+
+table AdcPack {
+    adc_idx: uint8;
+    channels: [uint16];
+}
+
+table EncoderPack {
+    encoder_id: uint8;
+    velocity_rad_s: float;
+}
+
+// ── Peripheral passthrough ─────────────────────────────────────────────
+
+table CanPack {
+    can_idx: uint8;
+    can_id: uint32;
+    can_dlc: uint8;
+    is_extended: bool;
+    is_rtr: bool;
+    rx_data: [ubyte];
+}
+
+table UartPack {
+    uart_idx: uint8;
+    rx_data: [ubyte];
+}
+
+table I2cReadPack {
+    i2c_idx: uint8;
+    device_addr: uint16;
+    register_addr: uint8;
+    data: [ubyte];
+}
+
+table SpiReadPack {
+    spi_idx: uint8;
+    data: [ubyte];
+}
+
+// ── Status ─────────────────────────────────────────────────────────────
+
+table StatusPack {
+    uptime_ms: uint64;
+    error_flags: uint32;
+    cpu_temp: float;
+}
+
+// ── Frame ──────────────────────────────────────────────────────────────
+
+union MsgPayload {
+    ImuPack,
+    CanPack,
+    UartPack,
+    AdcPack,
+    EncoderPack,
+    I2cReadPack,
+    SpiReadPack,
+    StatusPack,
+}
+
+table SlaveToHostFrame {
+    payload: MsgPayload;
+}
+
+root_type SlaveToHostFrame;
