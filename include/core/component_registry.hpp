@@ -12,7 +12,8 @@ namespace nuedcs::core {
 
 class ComponentRegistry {
 public:
-    using Factory = std::function<std::unique_ptr<Component>(const char* instance_name)>;
+    using Factory = std::function<std::unique_ptr<Component>(const char* instance_name,
+                                                             ryml::NodeRef config)>;
 
     static ComponentRegistry& instance()
     {
@@ -25,14 +26,16 @@ public:
         factories_[type_name] = std::move(f);
     }
 
-    std::unique_ptr<Component> create(const std::string& type_name, const char* instance_name) const
+    std::unique_ptr<Component> create(const std::string& type_name,
+                                      const char* instance_name,
+                                      ryml::NodeRef config) const
     {
         auto it = factories_.find(type_name);
         if (it == factories_.end()) {
-            spdlog::error("[Registry] Unknown component type: '{}'", type_name);
+            spdlog::error("[Registry] Unknown type: '{}'", type_name);
             return nullptr;
         }
-        return it->second(instance_name);
+        return it->second(instance_name, config);
     }
 
     bool has(const std::string& type_name) const

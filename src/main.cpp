@@ -1,3 +1,6 @@
+#include "mimalloc-new-delete.h"
+#include "mimalloc-override.h"
+
 // 组件头文件必须在 executor.hpp 之前 include，
 // 这样注册宏的静态初始化器才能在 main 之前执行。
 #include "components/camera.hpp"
@@ -8,6 +11,7 @@
 #include "core/executor.hpp"
 
 #include <spdlog/spdlog.h>
+#include "hardware/car.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -66,15 +70,12 @@ int main()
             type_name = instance_name = desc;
         }
 
-        auto comp = registry.create(type_name, instance_name.c_str());
+        // 构造时传入配置
+        auto config = root[c4::to_csubstr(instance_name)];
+        auto comp = registry.create(type_name, instance_name.c_str(), config);
         if (!comp) {
             spdlog::error("[main] Failed to create: {}", desc);
             return 1;
-        }
-
-        // 用实例名查找对应的 YAML 配置段
-        if (root.has_child(c4::to_csubstr(instance_name))) {
-            comp->configure(root[c4::to_csubstr(instance_name)]);
         }
 
         executor.add_component(std::move(comp));

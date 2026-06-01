@@ -2,10 +2,10 @@ loop_hz: 1000
 
 components:
   - Camera -> camera1
-  - Camera -> camera2
   - Motor -> motor
   - Heartbeat -> heartbeat
   - PredefinedMsgProvider -> status
+  - Car -> car0
 
 camera1:
   device: /dev/video0
@@ -30,3 +30,5 @@ motor:
 status:
   loop_hz: 1000
 
+car0:
+  

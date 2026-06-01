@@ -7,17 +7,14 @@
 
 namespace nuedcs::components {
 
-using core::node_str;
 using core::node_val;
 
 class Heartbeat : public core::Component {
 public:
-    Heartbeat() {
-        register_input("/test", wdad_);
+    Heartbeat(ryml::NodeRef config) {
+        register_input("/camera1/test", wdad_);
         register_output("/flag", flag_, false);
-    };
 
-    void configure(ryml::NodeRef config) override {
         interval_ms_ = node_val<int64_t>(config["interval_ms"], 1000);
     }
 
@@ -29,8 +26,7 @@ public:
 
     void update() override {
         auto now = std::chrono::steady_clock::now();
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_).count()
-            >= interval_ms_) {
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_).count() >= interval_ms_) {
             info("tick #{}", ++ticks_);
             last_ = now;
         }
@@ -40,7 +36,7 @@ private:
     InputInterface<double> wdad_;
     OutputInterface<bool> flag_;
     int64_t interval_ms_ = 1000;
-    int64_t ticks_       = 0;
+    int64_t ticks_ = 0;
     std::chrono::steady_clock::time_point last_;
 };
 

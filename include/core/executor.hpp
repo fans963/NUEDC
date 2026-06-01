@@ -7,11 +7,13 @@
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <functional>
 #include <memory>
 #include <string>
 #include <thread>
 #include <typeinfo>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace nuedcs::core {
@@ -20,45 +22,53 @@ class Executor {
 public:
     Executor() = default;
 
-    void add_component(std::unique_ptr<Component> c) { components_.push_back(std::move(c)); }
+    void add_component(std::unique_ptr<Component> c)
+    {
+        if (!c) return;
+        auto partners = std::move(c->partner_component_list_);
+        components_.push_back(std::move(c));
+        for (auto& p : partners)
+            add_component(std::move(p));
+    }
 
     void set_loop_hz(double hz) { loop_hz_ = hz; }
 
-    bool pair() {
-        // 收集所有 output
-        struct Entry {
-            void* data;
-            Component* owner;
-        };
+    bool pair()
+    {
+        struct Entry { void* data; Component* owner; };
         std::unordered_map<std::string, Entry> outs;
 
         for (auto& c : components_) {
             for (auto& o : c->outputs_) {
-                outs[std::string(o.type.name()) + ":" + o.name] = { o.data, c.get() };
+                auto key = std::string(o.type.name()) + ":" + o.name;
+                if (auto [it, ok] = outs.emplace(key, Entry{o.data, c.get()}); !ok) {
+                    spdlog::error("[Executor] Duplicate output '{}' on [{}] and [{}]",
+                        o.name, c->name(), it->second.owner->name());
+                    return false;
+                }
             }
         }
 
-        // 重置依赖状态
         for (auto& c : components_) {
-            c->before_pairing({ });
+            c->before_pairing({});
             c->dep_count_ = 0;
             c->wanted_by_.clear();
         }
 
-        // 匹配 input → output（不提前失败，先构建完整依赖图）
         for (auto& c : components_) {
             for (auto& inp : c->inputs_) {
                 auto key = std::string(inp.type.name()) + ":" + inp.name;
                 auto it  = outs.find(key);
                 if (it != outs.end()) {
                     *inp.ptr = it->second.data;
-                    if (it->second.owner != c.get()) {
-                        it->second.owner->wanted_by_.insert(c.get());
+                    if (it->second.owner != c.get()
+                    && it->second.owner->wanted_by_.insert(c.get()).second) {
                         c->dep_count_++;
                     }
                 } else if (inp.req) {
-                    spdlog::warn("[Executor] Input '{}' on '{}' has no matching output (may be circular)",
+                    spdlog::error("[Executor] Input '{}' on '{}' has no matching output",
                         inp.name, c->name());
+                    return false;
                 }
             }
         }
@@ -91,15 +101,14 @@ public:
                     auto it  = outs.find(key);
                     if (it == outs.end()) continue;
                     auto* next = it->second.owner;
-                    if (next == cur) continue; // 自环跳过
+                    if (next == cur) continue;
                     if (in_stack.contains(next)) {
-                        // 找到环，输出路径
                         path.push_back(next);
                         std::string cycle;
-                        bool in_cycle = false;
+                        bool in = false;
                         for (size_t i = 0; i < path.size(); i++) {
-                            if (path[i] == next) in_cycle = true;
-                            if (in_cycle) {
+                            if (path[i] == next) in = true;
+                            if (in) {
                                 if (!cycle.empty()) cycle += " → ";
                                 cycle += path[i]->name();
                             }
@@ -108,33 +117,28 @@ public:
                         found = true;
                         return;
                     }
-                    if (!visited.contains(next))
-                        dfs(next);
+                    if (!visited.contains(next)) dfs(next);
                 }
                 path.pop_back();
                 in_stack.erase(cur);
             };
 
             for (auto& c : components_) {
-                if (!visited.contains(c.get()) && c->dep_count_ > 0)
-                    dfs(c.get());
+                if (!visited.contains(c.get()) && c->dep_count_ > 0) dfs(c.get());
                 if (found) break;
             }
             if (!found)
-                spdlog::error("[Executor] Circular dependency detected ({} unresolvable)",
+                spdlog::error("[Executor] Circular dependency ({} unresolvable)",
                     components_.size() - updating_order_.size());
             return false;
         }
 
-        // 按拓扑序重排 components_
+        // 按拓扑序重排
         std::vector<std::unique_ptr<Component>> sorted;
         sorted.reserve(components_.size());
         for (auto* raw : updating_order_) {
             for (auto& c : components_) {
-                if (c.get() == raw) {
-                    sorted.push_back(std::move(c));
-                    break;
-                }
+                if (c.get() == raw) { sorted.push_back(std::move(c)); break; }
             }
         }
         components_ = std::move(sorted);
@@ -146,15 +150,17 @@ public:
             c->wanted_by_.clear();
         }
 
-        spdlog::info(
-            "[Executor] Pairing OK: {} components, {} outputs", components_.size(), outs.size());
+        spdlog::info("[Executor] Pairing OK: {} components, {} outputs",
+            components_.size(), outs.size());
         return true;
     }
 
-    bool init_all() {
+    bool init_all()
+    {
         if (!pair()) return false;
 
         for (auto& c : components_) {
+            spdlog::info("[Executor] Init: {}", c->name());
             if (!c->init()) {
                 spdlog::error("[Executor] '{}' init failed!", c->name());
                 return false;
@@ -163,43 +169,48 @@ public:
         return true;
     }
 
-    void start() {
+    void start()
+    {
         std::signal(SIGINT, handler);
         std::signal(SIGTERM, handler);
     }
 
-    void run() {
+    void run()
+    {
         using clock = std::chrono::steady_clock;
         using ns    = std::chrono::nanoseconds;
 
         const auto period = ns(static_cast<int64_t>(1e9 / loop_hz_));
+        spdlog::info("[Executor] Main loop: {} components @ {:.0f} Hz", components_.size(), loop_hz_);
 
         auto next_tick  = clock::now();
+        int64_t count   = 0;
         auto stats_time = clock::now();
 
         while (!quit_.load(std::memory_order::relaxed)) {
-            for (auto& c : components_)
-                c->update();
+            for (auto& c : components_) c->update();
 
             next_tick += period;
             auto now = clock::now();
             if (now < next_tick) std::this_thread::sleep_until(next_tick);
             else next_tick = now;
 
-            if (clock::now() - stats_time >= std::chrono::seconds(1)) {
+            if (++count; clock::now() - stats_time >= std::chrono::seconds(1)) {
+                double hz = count * 1e9
+                    / std::chrono::duration_cast<ns>(clock::now() - stats_time).count();
+                spdlog::info("[Executor] {:.1f} Hz (target {:.0f})", hz, loop_hz_);
+                count = 0;
                 stats_time = clock::now();
             }
         }
         spdlog::info("[Executor] Shutting down");
     }
 
-    [[nodiscard]] const std::vector<std::unique_ptr<Component>>& components() const {
-        return components_;
-    }
+    [[nodiscard]] const std::vector<std::unique_ptr<Component>>& components() const { return components_; }
 
 private:
-    // 递归 DFS：打印依赖树 + 确定更新顺序
-    void append_order(Component* comp) {
+    void append_order(Component* comp)
+    {
         std::string indent(depth_ * 4, ' ');
         spdlog::info("[Executor]   - {}{}", indent, comp->name());
         updating_order_.push_back(comp);
