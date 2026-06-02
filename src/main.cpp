@@ -3,15 +3,11 @@
 
 // 组件头文件必须在 executor.hpp 之前 include，
 // 这样注册宏的静态初始化器才能在 main 之前执行。
-#include "components/camera.hpp"
-#include "components/motor.hpp"
-#include "components/heartbeat.hpp"
-#include "core/predefined_msg_provider.hpp"
+#include "hardware/car.hpp"
 
 #include "core/executor.hpp"
 
 #include <spdlog/spdlog.h>
-#include "hardware/car.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -48,9 +44,6 @@ int main()
     auto& registry = nuedcs::core::ComponentRegistry::instance();
     nuedcs::core::Executor executor;
 
-    if (root.has_child("loop_hz"))
-        executor.set_loop_hz(nuedcs::core::node_val<double>(root["loop_hz"], 1000.0));
-
     if (!root.has_child("components") || !root["components"].is_seq()) {
         spdlog::error("[main] 'components' must be a YAML sequence");
         return 1;
@@ -59,7 +52,8 @@ int main()
     std::regex pattern(R"(\s*(\S+)\s*->\s*(\S+)\s*)");
 
     for (ryml::NodeRef entry : root["components"].children()) {
-        auto desc = nuedcs::core::node_str(entry);
+        c4::csubstr s = entry.val();
+        auto desc = std::string(s.begin(), s.size());
         std::string type_name, instance_name;
 
         std::smatch m;

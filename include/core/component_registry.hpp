@@ -2,7 +2,6 @@
 
 #include "component.hpp"
 
-#include <functional>
 #include <memory>
 #include <spdlog/spdlog.h>
 #include <string>
@@ -12,24 +11,20 @@ namespace nuedcs::core {
 
 class ComponentRegistry {
 public:
-    using Factory = std::function<std::unique_ptr<Component>(const char* instance_name,
-                                                             ryml::NodeRef config)>;
+    using Factory = std::unique_ptr<Component> (*)(const char*, ryml::NodeRef);
 
-    static ComponentRegistry& instance()
-    {
+    static ComponentRegistry& instance() {
         static ComponentRegistry reg;
         return reg;
     }
 
-    void add(const std::string& type_name, Factory f)
-    {
-        factories_[type_name] = std::move(f);
+    void add(const std::string& type_name, Factory f) {
+        factories_[type_name] = f;
     }
 
     std::unique_ptr<Component> create(const std::string& type_name,
                                       const char* instance_name,
-                                      ryml::NodeRef config) const
-    {
+                                      ryml::NodeRef config) const {
         auto it = factories_.find(type_name);
         if (it == factories_.end()) {
             spdlog::error("[Registry] Unknown type: '{}'", type_name);
@@ -38,8 +33,7 @@ public:
         return it->second(instance_name, config);
     }
 
-    bool has(const std::string& type_name) const
-    {
+    bool has(const std::string& type_name) const {
         return factories_.count(type_name) > 0;
     }
 

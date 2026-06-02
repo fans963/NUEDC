@@ -1,35 +1,92 @@
 # NUEDC
 
-全国大学生电子设计竞赛嵌入式开发项目。主机端（aarch64 SBC）视觉感知 + 决策控制，通过 USB 与下位机（STM32F723）通信。
+嵌入式机器人竞赛开发项目。主机端（x86-64 / aarch64）通过 USB Bulk 与下位机（STM32F723 Zephyr）通信，FlatBuffers 协议。
 
 ## 架构
 
-```
-┌─────────────────────────────┐       USB Bulk        ┌──────────────────────────────┐
-│       NUEDC (主机)           │ ◄──────────────────► │      nuedc_slave (从机)        │
-│                             │   FlatBuffers 协议     │                              │
-│  组件系统 + HFSM 状态机      │                       │  电机 PID / IMU / 编码器       │
-│  OpenCV 视觉处理             │   MotorCommand ──────►│  CAN / UART / SPI / I2C      │
-│  ryml YAML 配置              │   ◄────────────────── │  ADC                          │
-│  spdlog 日志                 │   SensorTelemetry     │                              │
-└─────────────────────────────┘                       └──────────────────────────────┘
+```mermaid
+graph TD
+    subgraph Host["NUEDC (x86-64 / aarch64)"]
+        EXEC[Executor: spin loop]
+        CAR[Car]
+        CMD[CarCommand throttled]
+        ENC_L[EncoderMotor x2]
+        MOT_L[CanMotor x2]
+        IMU[Bmi088 ring-buffered AHRS]
+        TF[FastTF tree]
+        SLAVE[NuedcSlave]
+        USB_T[UsbTransport async libusb]
+
+        EXEC --> CAR
+        CAR --> ENC_L
+        CAR --> MOT_L
+        CAR --> IMU
+        CAR --> TF
+        CAR --> SLAVE
+        CAR --> CMD
+        SLAVE --> USB_T
+    end
+
+    subgraph Firmware["nuedc_slave (STM32F723)"]
+        PID[Motor PID]
+        ENC[Encoder QDEC ISR]
+        BMI[BMI088 SPI]
+        CAN[CAN / UART / ADC]
+    end
+
+    USB_T <-->|USB Bulk FlatBuffers| Firmware
+
+    CMD -->|MotorCommandPack| USB_T
+    USB_T -->|EncoderPack / ImuPack| CAR
 ```
 
-## 技术栈
+### 数据流
 
-| 类别 | 技术 |
-|------|------|
-| 语言 | C++26（主机 GCC 16，交叉编译 GCC 15） |
-| 构建 | CMake + vcpkg + CMake Presets |
-| 组件系统 | 自动注册 + 输入输出绑定 + 依赖分析 + 环形依赖检测 |
-| 序列化 | FlatBuffers（主机↔从机通信） |
-| 配置 | ryml（快速 YAML 解析） |
-| 日志 | spdlog（共享 logger，组件名前缀） |
-| 视觉 | OpenCV 4 |
-| 线性代数 | Eigen3 |
-| 物理单位 | mp-units |
-| 状态机 | HFSM2 |
-| 内存 | mimalloc |
+```mermaid
+sequenceDiagram
+    participant USB as USB bg thread
+    participant RING as rx_ring_ (SPSC)
+    participant MAIN as main thread (spin)
+    participant TX as tx_ring_ (SPSC)
+
+    USB->>RING: rx callback: decode and push
+    USB->>TX: drain_tx: pop and submit
+    MAIN->>RING: pump(): pop and dispatch
+    MAIN->>MAIN: update_status drain imu ring
+    MAIN->>TX: command_update throttled push
+```
+
+## 快速开始
+
+### 预设一览
+
+| Preset | 编译器 | 链接 | 用途 |
+|--------|--------|------|------|
+| `native` | GCC 16 | 动态 | 本机开发 |
+| `native-static` | GCC 16 | 静态 | 本机单文件发布 |
+| `native-debug` | GCC 16 | 动态, -O0 | 本机调试 |
+| `clang` | Clang 22 | 动态 | Clang 开发 |
+| `clang-static` | Clang 22 | 静态 | Clang 发布 |
+| `clang-debug` | Clang 22 | 动态, -O0 | Clang 调试 |
+| `aarch64` | GCC cross | 动态 | ARM64 部署 |
+| `aarch64-static` | GCC cross | 静态 | ARM64 自包含 |
+
+### 本机开发
+
+```bash
+cmake --preset native && cmake --build build
+cmake --install build --prefix ./build/install && ./build/install/bin/main
+```
+
+### 交叉编译 aarch64
+
+```bash
+cmake --preset aarch64 && cmake --build build
+cmake --install build --prefix ./build/install
+
+scp -r build/install/* board:/opt/nuedc/
+ssh board /opt/nuedc/bin/main
+```
 
 ## 项目结构
 
@@ -37,62 +94,34 @@
 NUEDC/
 ├── include/
 │   ├── core/
-│   │   ├── component.hpp              # Component 基类 + InputInterface/OutputInterface
-│   │   ├── component_registry.hpp     # 自动注册 + 工厂
-│   │   ├── executor.hpp               # 依赖分析 + 拓扑排序 + 主循环
-│   │   └── predefined_msg_provider.hpp # 预置组件（状态输出）
-│   ├── components/                    # 普通组件
-│   │   ├── camera.hpp
-│   │   ├── motor.hpp
-│   │   └── heartbeat.hpp
-│   ├── hardware/                      # 硬件交互组件
-│   │   └── car.hpp
-│   └── usb/                           # USB 通信
-│       ├── protocol.hpp
-│       └── nuedc_slave.hpp
-├── schemas/                           # FlatBuffers schema（与 nuedc_slave 共享）
+│   │   ├── component.hpp              # Component 基类 + Input/OutputInterface + Config
+│   │   ├── component_registry.hpp     # 自动注册工厂
+│   │   └── executor.hpp               # 拓扑排序 + spin-loop
+│   ├── controller/
+│   │   ├── pid/                       # PID 
+│   │   └── chassis/                   # 二轮差速解算
+│   ├── devices/
+│   │   ├── encoder_motor.hpp          # 固件端电机
+│   │   ├── can_motor.hpp              # CAN 直通电机
+│   │   └── bmi088.hpp                # IMU + Mahony AHRS (ring-buffered)
+│   ├── hardware/
+│   │   └── car.hpp                    # 差分底盘
+│   ├── usb/
+│   │   ├── protocol.hpp               # 帧协议 0x5A|size(4)|body|0xA5
+│   │   ├── usb_transport.hpp          # 异步 libusb + SPSC ring
+│   │   └── nuedc_slave.hpp            # NuedcSlave<Handler> 协议层
+│   ├── fast_tf/                       # FastTF (GPL-3.0) 编译期 TF 树
+│   └── util/
+│       ├── ring_buffer.hpp            # 无锁 SPSC ring buffer
+│       └── throttle.hpp              # 自限频工具
+├── schemas/                           # FlatBuffers schema (与固件共享)
 ├── config/
-│   └── config.yaml                    # 组件声明 + 参数配置
-├── src/
-│   └── main.cpp                       # 程序入口
-├── toolchains/                        # CMake 交叉编译工具链
-├── triplets/                          # vcpkg 自定义 triplet
-├── CMakePresets.json                  # native / cross-aarch64 预设
+│   └── config.yaml
+├── toolchains/                        # GCC / Clang 工具链
+├── triplets/                          # vcpkg 三元组 (GCC/Clang, 动静)
+├── CMakePresets.json
 ├── CMakeLists.txt
 └── vcpkg.json
-```
-
-## 快速开始
-
-### 本机构建（x86_64）
-
-```bash
-cmake --preset native
-cmake --build build/native
-cmake --install build/native --prefix ./build/install
-./build/install/bin/main
-```
-
-### 交叉编译（aarch64）
-
-```bash
-cmake --preset cross-aarch64
-cmake --build build/aarch64
-cmake --install build/aarch64 --prefix ./build/install
-```
-
-部署到板子：
-
-```bash
-scp -r build/install/* board:/opt/nuedc/
-ssh board /opt/nuedc/bin/run.sh
-```
-
-### 调试构建
-
-```bash
-cmake --preset native -DCMAKE_BUILD_TYPE=Debug
-cmake --build build/native
 ```
 
 ## 组件系统
@@ -100,200 +129,97 @@ cmake --build build/native
 ### 写一个组件
 
 ```cpp
-// include/components/my_component.hpp
-#pragma once
 #include "core/component_registry.hpp"
-
-namespace nuedcs::components {
-
-using core::node_val;
-using core::node_str;
 
 class MyComponent : public core::Component {
 public:
-    // 配置通过构造函数注入（不再需要 configure()）
     MyComponent(ryml::NodeRef config) {
-        register_output("/" + name() + "/value", value_out_, 0.0);
-        register_input("/status/loop_hz", rate_in_);
-
-        threshold_ = node_val<double>(config["threshold"], 0.5);
+        auto c = core::Config{config};
+        threshold_ = c["threshold"].get(0.5);
+        register_output("/" + name() + "/value", out_, 0.0);
     }
-
-    bool init() override {
-        info("threshold={}", threshold_);
-        return true;
-    }
-
-    void update() override {
-        if (rate_in_.ready() && *rate_in_ > threshold_)
-            warn("rate too high: {:.1f}", *rate_in_);
-    }
-
+    void update() override { *out_ = compute(); }
 private:
-    OutputInterface<double> value_out_;
-    InputInterface<double> rate_in_;
-    double threshold_ = 0.5;
+    OutputInterface<double> out_;
+    double threshold_;
 };
-
-} // namespace nuedcs::components
-
 REGISTER_COMPONENT(nuedcs::components, MyComponent);
 ```
 
-### Partner 组件（打破环形依赖）
+### 配置访问
 
-当一个组件既有输入又有输出时会形成环，用 partner 拆分：
+```cpp
+auto c = core::Config{config};           // thin wrapper over ryml
+auto v  = c["key"].get<double>(3.14);    // warns if key missing
+auto s  = c["path"]["to"]["key"].str();  // nested, warns at each missing level
+```
+
+### Partner 组件
 
 ```cpp
 class Car : public core::Component {
-public:
     Car(ryml::NodeRef config)
         : command_(create_partner_component<CarCommand>(name() + "_command", *this)) {
-        register_input("/imu/gyro", gyro_in_);           // 输入：传感器
+        register_output(name() + "/_car_sync", sync_out_, true);  // explicit dependency
     }
-
 private:
-    // Partner 不走 Registry，直接由父组件创建
     class CarCommand : public core::Component {
-    public:
-        CarCommand(Car& car) : car_(car) {
-            register_output("/motor/speed", speed_out_, 0.0f); // 输出：电机指令
-        }
         void update() override { car_.command_update(); }
-    private:
-        OutputInterface<float> speed_out_;
         Car& car_;
+        InputInterface<bool> sync_in_;
     };
-
-    InputInterface<float> gyro_in_;
-    CarCommand* command_;    // 裸指针，所有权在 Executor
+    CarCommand* command_;
 };
 REGISTER_COMPONENT(nuedcs::hardware, Car);
-// CarCommand 不需要 REGISTER_COMPONENT
 ```
 
-Partner 的构造函数可以自由定义参数，不走 Registry 的标准接口。
+## 设备驱动
 
-### YAML 配置
-
-```yaml
-loop_hz: 1000
-
-components:
-  - Camera -> camera1
-  - Camera -> camera2
-  - Motor -> motor
-  - Heartbeat -> heartbeat
-  - PredefinedMsgProvider -> status
-  - MyComponent -> my_comp
-
-camera1:
-  device: /dev/video0
-  width: 1280
-  height: 720
-  fps: 60
-
-camera2:
-  device: /dev/video2
-  width: 640
-  height: 480
-  fps: 30
-
-my_comp:
-  threshold: 0.8
-```
-
-- `Type -> instance_name`：同一类型可创建多个实例
-- 实例名对应 YAML 中的配置段，构造时直接注入
-
-### 依赖分析
-
-Executor 自动完成：
-
-1. 收集所有 `OutputInterface`
-2. 匹配 `InputInterface` 到对应输出（按类型名 + 路径）
-3. DFS 拓扑排序 + 打印依赖树
-4. 检测环形依赖，输出成环路径
-5. 按拓扑序重排，确保被依赖的先 update
 
 ```
-── Dependency chain ──────────────────────
-  - motor
-  - status
-  -     camera1
-  -         heartbeat
-  -         test_command
-  -     camera2
-─────────────────────────────────────────
+store_xxx(raw)  ──►  update_status()  ──►  generate_command()
+(USB 回调)          (主循环)               (主循环, throttled)
+ atomic/ring push   load → convert         read InputInterface → raw cmd
 ```
-
-### 错误处理
-
-初始化阶段的致命错误会立即停止程序（Exit 1）：
-
-- **重复 output**：`[error] Duplicate output '/imu/gyro' on [camera2] and [camera1]`
-- **必选 input 无匹配**：`[error] Input '/flag' on 'status' has no matching output`
-- **环形依赖**：`[error] Circular dependency: status → heartbeat → camera1 → status`
-
-### 预置组件
-
-`PredefinedMsgProvider` 提供公共输出：
-
-| 输出路径 | 类型 | 含义 |
-|----------|------|------|
-| `/status/loop_hz` | `double` | 主循环频率 |
-| `/status/update_count` | `int64_t` | 总更新计数 |
-
-其他组件通过 `register_input` 绑定即可读取。
-
-## USB 通信（nuedc_slave）
-
-主机通过 USB Bulk 与下位机（STM32F723 + Zephyr）通信，协议为 FlatBuffers 帧：
-
-```
-0x5A | u32_le_size | FlatBuffer_body | 0xA5
-```
-
-使用方式：
 
 ```cpp
-#include "usb/nuedc_slave.hpp"
+// Bmi088 — ring-buffered, 不漏数据
+imu_.store_sample(ax, ay, az, gx, gy, gz);  // USB 回调
+imu_.update_status();                        // 主循环 drain ring → AHRS
 
-class MyBoard : public nuedc::NuedcSlave {
-    using NuedcSlave::NuedcSlave;
-    void on_imu(float ax, float ay, float az, float gx, float gy, float gz) override {
-        info("IMU: ax={:.2f} ay={:.2f} az={:.2f}", ax, ay, az);
-    }
-};
+// EncoderMotor — 固件已算好速度
+enc.store_velocity(12.5f);                   // USB 回调, 直接存
+enc.update_status();                         // publish output
 
-int main() {
-    MyBoard board;
-    board.set_motor_speed(0, 10.0f);
-    board.handle_events();
-}
+// CanMotor — NaN 优先级 angle > velocity > torque
+motor.store_status(can_8bytes);
+motor.update_status();
+uint64_t cmd = motor.generate_command();
 ```
 
-需要 libusb（vcpkg 自动安装），交叉编译时自动跳过。
+## 线程模型
 
-## 运行时库打包
+```mermaid
+flowchart LR
+    subgraph MAIN["main thread spin"]
+        UPD[Component update]
+        PUMP[slave pump]
+        DEV[device update_status]
+        CMD2[throttled command_update]
+    end
 
-交叉编译的 install 包含自带的 glibc + 动态加载器，不依赖板子系统库版本：
+    subgraph BG["USB bg thread"]
+        RX[rx done and decode]
+        TXD[tx done and drain]
+    end
 
+    subgraph RINGS["lock-free SPSC"]
+        RXQ[rx_ring_]
+        TXQ[tx_ring_]
+    end
+
+    BG -->|push| RXQ -->|pop| MAIN
+    MAIN -->|push| TXQ -->|pop| BG
 ```
-install/
-├── bin/main
-├── bin/run.sh
-├── config/config.yaml
-└── lib/
-    ├── ld-linux-aarch64.so.1
-    ├── libc.so.6
-    └── ...
-```
 
-## 注意事项
-
-- `-freflection` 仅 GCC 16+ 支持，交叉编译时 CMake 自动禁用
-- `aligned_storage_t` 在 C++23 中 deprecated，不影响功能
-- 组件名通过 `tl_component_name` thread-local 传递，构造时自动读取
-- `unique_ptr` 贯穿全文，无 `shared_ptr` 开销
-- 日志组件名前缀 `[instance_name]` 通过共享 logger + 格式化实现
+全 lock-free：`RingBuffer` (SPSC) + `std::atomic`，零 mutex。

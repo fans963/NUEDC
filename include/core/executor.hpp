@@ -5,12 +5,9 @@
 #include <spdlog/spdlog.h>
 
 #include <atomic>
-#include <chrono>
 #include <csignal>
-#include <functional>
 #include <memory>
 #include <string>
-#include <thread>
 #include <typeinfo>
 #include <unordered_map>
 #include <unordered_set>
@@ -30,8 +27,6 @@ public:
         for (auto& p : partners)
             add_component(std::move(p));
     }
-
-    void set_loop_hz(double hz) { loop_hz_ = hz; }
 
     bool pair()
     {
@@ -90,7 +85,7 @@ public:
             std::unordered_set<Component*> in_stack;
             bool found = false;
 
-            std::function<void(Component*)> dfs = [&](Component* cur) {
+            auto dfs = [&](auto& self, Component* cur) -> void {
                 if (found) return;
                 visited.insert(cur);
                 in_stack.insert(cur);
@@ -117,14 +112,14 @@ public:
                         found = true;
                         return;
                     }
-                    if (!visited.contains(next)) dfs(next);
+                    if (!visited.contains(next)) self(self, next);
                 }
                 path.pop_back();
                 in_stack.erase(cur);
             };
 
             for (auto& c : components_) {
-                if (!visited.contains(c.get()) && c->dep_count_ > 0) dfs(c.get());
+                if (!visited.contains(c.get()) && c->dep_count_ > 0) dfs(dfs, c.get());
                 if (found) break;
             }
             if (!found)
@@ -177,33 +172,8 @@ public:
 
     void run()
     {
-        using clock = std::chrono::steady_clock;
-        using ns    = std::chrono::nanoseconds;
-
-        const auto period = ns(static_cast<int64_t>(1e9 / loop_hz_));
-        spdlog::info("[Executor] Main loop: {} components @ {:.0f} Hz", components_.size(), loop_hz_);
-
-        auto next_tick  = clock::now();
-        int64_t count   = 0;
-        auto stats_time = clock::now();
-
-        while (!quit_.load(std::memory_order::relaxed)) {
+        while (!quit_.load(std::memory_order::relaxed))
             for (auto& c : components_) c->update();
-
-            next_tick += period;
-            auto now = clock::now();
-            if (now < next_tick) std::this_thread::sleep_until(next_tick);
-            else next_tick = now;
-
-            if (++count; clock::now() - stats_time >= std::chrono::seconds(1)) {
-                double hz = count * 1e9
-                    / std::chrono::duration_cast<ns>(clock::now() - stats_time).count();
-                spdlog::info("[Executor] {:.1f} Hz (target {:.0f})", hz, loop_hz_);
-                count = 0;
-                stats_time = clock::now();
-            }
-        }
-        spdlog::info("[Executor] Shutting down");
     }
 
     [[nodiscard]] const std::vector<std::unique_ptr<Component>>& components() const { return components_; }
@@ -229,7 +199,6 @@ private:
     static inline std::atomic<bool> quit_ { false };
     static void handler(int) { quit_.store(true, std::memory_order::relaxed); }
 
-    double loop_hz_ = 1000.0;
     std::vector<std::unique_ptr<Component>> components_;
     std::vector<Component*> updating_order_;
     size_t depth_ = 0;

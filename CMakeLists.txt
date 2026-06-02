@@ -7,6 +7,13 @@ set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# ── Linkage mode ─────────────────────────────────────────────────────
+# ON  = everything statically linked, single self-contained binary.
+# OFF = vcpkg libs dynamic (.so), faster incremental linking; shared
+#       libs are automatically bundled at install time.
+option(NUEDC_STATIC_LINKING "Static-link all dependencies"
+    "$ENV{NUEDC_STATIC_LINKING}")
+
 # -freflection 仅 GCC 16+ 支持
 include(CheckCXXCompilerFlag)
 check_cxx_compiler_flag(-freflection HAS_FREFLECTION)
@@ -15,18 +22,26 @@ if(HAS_FREFLECTION)
 endif()
 
 add_compile_options(-Wall -Wextra -Wno-unused-parameter)
-add_link_options(-static-libstdc++ -static-libgcc)
+
+if(NUEDC_STATIC_LINKING)
+    add_link_options(-static-libstdc++ -static-libgcc)
+endif()
 
 # Release 专属优化
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
-    add_compile_options(-O3 -s)
+    add_compile_options(-O3 -fno-semantic-interposition)
     add_link_options(-s)
 
-    # LTO
+    # LTO: whole-program optimization
     include(CheckIPOSupported)
     check_ipo_supported(RESULT ipo_supported)
     if(ipo_supported)
         set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+        # GCC: single partition for maximum cross-TU inlining
+        # Clang: -flto (full) already does this; -flto=thin is per-triplet
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+            add_link_options(-flto-partition=one)
+        endif()
     endif()
 
     add_compile_options(-ffunction-sections -fdata-sections)
@@ -39,7 +54,6 @@ find_package(Eigen3 CONFIG REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(ryml CONFIG REQUIRED)
-find_package(mp-units CONFIG REQUIRED)
 find_package(flatbuffers CONFIG REQUIRED)
 find_package(hfsm2 CONFIG REQUIRED)
 find_package(magic_enum CONFIG REQUIRED)
@@ -94,10 +108,6 @@ target_link_libraries(main PRIVATE
     ${OpenCV_LIBS}
     spdlog::spdlog_header_only
     ryml::ryml
-    mp-units::core 
-    mp-units::systems 
-    mp-units::mp-units 
-    mp-units::mp-units-contracts
     flatbuffers::flatbuffers
     hfsm2::hfsm2
     magic_enum::magic_enum
@@ -122,7 +132,19 @@ include(GNUInstallDirs)
 install(TARGETS main RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/config DESTINATION .)
 
-# 打包 glibc（仅交叉编译 aarch64 时需要，本机编译直接用系统 glibc）
+# ── Dynamic linkage: bundle vcpkg shared libraries ───────────────────
+if(NOT NUEDC_STATIC_LINKING)
+    set(_vcpkg_lib "${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/lib")
+    install(DIRECTORY "${_vcpkg_lib}/"
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        FILES_MATCHING
+        PATTERN "*.so" PATTERN "*.so.*"
+        PATTERN "pkgconfig" EXCLUDE
+        PATTERN "cmake" EXCLUDE
+    )
+endif()
+
+# ── Cross-compile aarch64: bundle glibc + wrapper ────────────────────
 if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
     set(GLIBC_DIR "/usr/aarch64-linux-gnu/lib")
     set(GLIBC_FILES
@@ -145,7 +167,6 @@ if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
         endforeach()
     ")
 
-    # 生成 wrapper 脚本
     install(CODE "
         file(WRITE \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/run.sh\"
 \"#!/bin/sh
@@ -161,6 +182,11 @@ message(STATUS "=================== Build Configuration ===================")
 message(STATUS "C++ Standard          : ${CMAKE_CXX_STANDARD}")
 message(STATUS "Compiler              : ${CMAKE_CXX_COMPILER}")
 message(STATUS "Sysroot               : ${CMAKE_SYSROOT}")
-message(STATUS "Reflection enabled    : Yes (-freflection)")
+if(HAS_FREFLECTION)
+    message(STATUS "Reflection enabled    : Yes (-freflection)")
+else()
+    message(STATUS "Reflection enabled    : No")
+endif()
 message(STATUS "Build Type            : ${CMAKE_BUILD_TYPE}")
+message(STATUS "Static linking        : ${NUEDC_STATIC_LINKING}")
 message(STATUS "========================================================")

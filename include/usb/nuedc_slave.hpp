@@ -1,9 +1,16 @@
 #pragma once
 
-// Host-side USB wrapper for nuedc_slave board.
-// Uses libusb for bulk transfers, FlatBuffers for serialization.
-// Wire protocol: 0x5A | u32_le_size | FlatBuffer | 0xA5
-// Only available when NUEDC_HAS_LIBUSB=1 (set by CMake when libusb is found).
+// FlatBuffers protocol over async USB transport.
+//
+// Template on Handler type — compile-time dispatch, guaranteed inlining.
+// Handler must provide any subset of:
+//   handle_imu(float ax, ay, az, gx, gy, gz)
+//   handle_encoder(uint8_t id, float velocity)
+//   handle_adc(uint8_t idx, const uint16_t* channels, size_t count)
+//   handle_can_rx(uint8_t idx, uint32_t id, uint8_t dlc, bool ext, bool rtr, const uint8_t* data)
+//   handle_uart_rx(uint8_t idx, const uint8_t* data, size_t len)
+//
+// Missing handlers are silently skipped (if constexpr).
 
 #ifndef NUEDC_HAS_LIBUSB
 #define NUEDC_HAS_LIBUSB 0
@@ -12,6 +19,7 @@
 #if NUEDC_HAS_LIBUSB
 
 #include "usb/protocol.hpp"
+#include "usb/usb_transport.hpp"
 
 #include <flatbuffers/flatbuffers.h>
 #include <host_to_slave_generated.h>
@@ -19,294 +27,210 @@
 
 #include <spdlog/spdlog.h>
 
-#include <atomic>
 #include <cstdint>
 #include <cstring>
-#include <libusb.h>
-#include <stdexcept>
-#include <vector>
 
 namespace nuedc {
 
+/// Concept checked at dispatch site (if constexpr), not here —
+/// Handler may be incomplete at member declaration point (e.g. Car inside Car).
+template <typename Handler>
 class NuedcSlave {
+    static constexpr size_t RX_RING_SIZE = 32;
+
+    struct RxFrame {
+        uint8_t data[4 + protocol::MAX_FRAME_LEN];
+        size_t  len = 0;
+    };
+
 public:
-    // ── Lifecycle ───────────────────────────────────────────────────────
-
-    explicit NuedcSlave(uint16_t vendor_id = 0x1209, uint16_t product_id = 0x0001)
-        : decoder_(*this)
+    explicit NuedcSlave(Handler& handler, uint16_t vid = 0x1209, uint16_t pid = 0x0001)
+        : handler_(handler)
+        , transport_(vid, pid)
+        , decoder_(*this)
     {
-        int ret = libusb_init(&ctx_);
-        if (ret != 0)
-            throw std::runtime_error("libusb_init failed: " + std::to_string(ret));
-
-        handle_ = libusb_open_device_with_vid_pid(ctx_, vendor_id, product_id);
-        if (!handle_) {
-            libusb_exit(ctx_);
-            throw std::runtime_error("Device not found (VID=0x1209 PID=0x0001)");
-        }
-
-        // Detach kernel driver on Linux
-        libusb_set_auto_detach_kernel_driver(handle_, 1);
-
-        ret = libusb_claim_interface(handle_, INTERFACE_NUM);
-        if (ret != 0) {
-            libusb_close(handle_);
-            libusb_exit(ctx_);
-            throw std::runtime_error("claim_interface failed: " + std::to_string(ret));
-        }
-
-        // Allocate async receive transfer
-        recv_xfer_ = libusb_alloc_transfer(0);
-        if (!recv_xfer_)
-            throw std::runtime_error("libusb_alloc_transfer failed");
-
-        libusb_fill_bulk_transfer(
-            recv_xfer_, handle_, EP_IN, recv_buf_, sizeof(recv_buf_),
-            [](libusb_transfer* xfer) {
-                static_cast<NuedcSlave*>(xfer->user_data)->on_usb_rx(xfer);
-            },
-            this, 0);
-
-        spdlog::info("[NuedcSlave] Connected (VID=0x{:04X} PID=0x{:04X})", vendor_id, product_id);
+        transport_.set_on_receive([this](const uint8_t* data, size_t len) {
+            decoder_.feed(data, len);
+        });
     }
 
-    ~NuedcSlave()
-    {
-        running_.store(false, std::memory_order::relaxed);
+    [[nodiscard]] bool connected() const { return transport_.connected(); }
+    void start() { transport_.start(); }
+    void stop()  { transport_.stop(); }
 
-        if (recv_xfer_) {
-            libusb_free_transfer(recv_xfer_);
-        }
-        if (handle_) {
-            libusb_release_interface(handle_, INTERFACE_NUM);
-            libusb_close(handle_);
-        }
-        if (ctx_) {
-            libusb_exit(ctx_);
-        }
+    /// Drain received frames, dispatch to handler. Handler passed by ref → inlined.
+    void pump() {
+        RxFrame f;
+        while (rx_ring_.pop(f))
+            dispatch(f.data, f.len);
     }
 
-    NuedcSlave(const NuedcSlave&)            = delete;
-    NuedcSlave& operator=(const NuedcSlave&) = delete;
+    // ── Async send (thread-safe, non-blocking) ─────────────────────────
 
-    // ── Event loop ──────────────────────────────────────────────────────
-
-    void handle_events()
-    {
-        int ret = libusb_submit_transfer(recv_xfer_);
-        if (ret != 0) {
-            spdlog::error("[NuedcSlave] submit_transfer failed: {}", ret);
-            return;
-        }
-
-        running_.store(true, std::memory_order::relaxed);
-        while (running_.load(std::memory_order::relaxed)) {
-            libusb_handle_events(ctx_);
-        }
-    }
-
-    void stop() { running_.store(false, std::memory_order::relaxed); }
-
-    // ── Send methods (host → slave) ─────────────────────────────────────
-
-    void set_motor_speed(uint8_t motor_id, float target_speed_rad_s)
-    {
-        fbb_.Clear();
-        auto cmd = Protocol::HostToSlave::CreateMotorCommandPack(fbb_, motor_id, target_speed_rad_s);
+    bool set_motor_speed(uint8_t motor_id, float target_speed) {
+        flatbuffers::FlatBufferBuilder fbb(128);
+        auto cmd = Protocol::HostToSlave::CreateMotorCommandPack(fbb, motor_id, target_speed);
         auto frame = Protocol::HostToSlave::CreateHostToSlaveFrame(
-            fbb_, Protocol::HostToSlave::MsgPayload::MotorCommandPack, cmd.Union());
-        fbb_.FinishSizePrefixed(frame);
-        send_frame(fbb_.GetBufferPointer(), fbb_.GetSize());
+            fbb, Protocol::HostToSlave::MsgPayload::MotorCommandPack, cmd.Union());
+        return finish_and_send(fbb, frame);
     }
 
-    void set_pid(uint8_t id, float kp, float ki, float kd,
+    bool set_pid(uint8_t id, float kp, float ki, float kd,
                  float out_min = -1000.f, float out_max = 1000.f,
-                 float i_min = -500.f, float i_max = 500.f, bool reset = false)
-    {
-        fbb_.Clear();
+                 float i_min = -500.f, float i_max = 500.f, bool reset = false) {
+        flatbuffers::FlatBufferBuilder fbb(128);
         auto pid = Protocol::HostToSlave::CreatePidConfigPack(
-            fbb_, id, kp, ki, kd, out_min, out_max, i_min, i_max, reset);
+            fbb, id, kp, ki, kd, out_min, out_max, i_min, i_max, reset);
         auto frame = Protocol::HostToSlave::CreateHostToSlaveFrame(
-            fbb_, Protocol::HostToSlave::MsgPayload::PidConfigPack, pid.Union());
-        fbb_.FinishSizePrefixed(frame);
-        send_frame(fbb_.GetBufferPointer(), fbb_.GetSize());
+            fbb, Protocol::HostToSlave::MsgPayload::PidConfigPack, pid.Union());
+        return finish_and_send(fbb, frame);
     }
 
-    void send_can(uint8_t can_idx, uint32_t can_id, uint8_t dlc,
-                  const uint8_t* data, bool is_extended = false, bool is_rtr = false)
-    {
-        fbb_.Clear();
-        auto tx_data = fbb_.CreateVector(data, dlc);
-        auto can = Protocol::HostToSlave::CreateCanPack(
-            fbb_, can_idx, can_id, dlc, is_extended, is_rtr, tx_data);
+    bool send_can(uint8_t idx, uint32_t id, uint8_t dlc, const uint8_t* data,
+                  bool extended = false, bool rtr = false) {
+        flatbuffers::FlatBufferBuilder fbb(128);
+        auto d = fbb.CreateVector(data, dlc);
+        auto can = Protocol::HostToSlave::CreateCanPack(fbb, idx, id, dlc, extended, rtr, d);
         auto frame = Protocol::HostToSlave::CreateHostToSlaveFrame(
-            fbb_, Protocol::HostToSlave::MsgPayload::CanPack, can.Union());
-        fbb_.FinishSizePrefixed(frame);
-        send_frame(fbb_.GetBufferPointer(), fbb_.GetSize());
+            fbb, Protocol::HostToSlave::MsgPayload::CanPack, can.Union());
+        return finish_and_send(fbb, frame);
     }
 
-    void send_uart(uint8_t uart_idx, const uint8_t* data, size_t len)
-    {
-        fbb_.Clear();
-        auto tx_data = fbb_.CreateVector(data, len);
-        auto uart = Protocol::HostToSlave::CreateUartPack(fbb_, uart_idx, tx_data);
+    bool send_uart(uint8_t idx, const uint8_t* data, size_t len) {
+        flatbuffers::FlatBufferBuilder fbb(128);
+        auto d = fbb.CreateVector(data, len);
+        auto uart = Protocol::HostToSlave::CreateUartPack(fbb, idx, d);
         auto frame = Protocol::HostToSlave::CreateHostToSlaveFrame(
-            fbb_, Protocol::HostToSlave::MsgPayload::UartPack, uart.Union());
-        fbb_.FinishSizePrefixed(frame);
-        send_frame(fbb_.GetBufferPointer(), fbb_.GetSize());
+            fbb, Protocol::HostToSlave::MsgPayload::UartPack, uart.Union());
+        return finish_and_send(fbb, frame);
     }
 
-    void set_encoder_config(uint8_t encoder_id, uint16_t lines_per_rev)
-    {
-        fbb_.Clear();
-        auto enc = Protocol::HostToSlave::CreateEncoderConfigPack(fbb_, encoder_id, lines_per_rev);
+    bool set_encoder_config(uint8_t id, uint16_t lines_per_rev) {
+        flatbuffers::FlatBufferBuilder fbb(64);
+        auto enc = Protocol::HostToSlave::CreateEncoderConfigPack(fbb, id, lines_per_rev);
         auto frame = Protocol::HostToSlave::CreateHostToSlaveFrame(
-            fbb_, Protocol::HostToSlave::MsgPayload::EncoderConfigPack, enc.Union());
-        fbb_.FinishSizePrefixed(frame);
-        send_frame(fbb_.GetBufferPointer(), fbb_.GetSize());
-    }
-
-    // ── Receive callbacks (slave → host) ────────────────────────────────
-    // Override these in your subclass to handle incoming data.
-
-    virtual void on_imu(float ax, float ay, float az, float gx, float gy, float gz)
-    {
-        (void)ax; (void)ay; (void)az; (void)gx; (void)gy; (void)gz;
-    }
-
-    virtual void on_encoder(uint8_t encoder_id, float velocity_rad_s)
-    {
-        (void)encoder_id; (void)velocity_rad_s;
-    }
-
-    virtual void on_adc(uint8_t adc_idx, const uint16_t* channels, size_t count)
-    {
-        (void)adc_idx; (void)channels; (void)count;
-    }
-
-    virtual void on_can_rx(uint8_t can_idx, uint32_t can_id, uint8_t dlc,
-                           bool is_extended, bool is_rtr, const uint8_t* data)
-    {
-        (void)can_idx; (void)can_id; (void)dlc; (void)is_extended; (void)is_rtr; (void)data;
-    }
-
-    virtual void on_uart_rx(uint8_t uart_idx, const uint8_t* data, size_t len)
-    {
-        (void)uart_idx; (void)data; (void)len;
+            fbb, Protocol::HostToSlave::MsgPayload::EncoderConfigPack, enc.Union());
+        return finish_and_send(fbb, frame);
     }
 
 private:
-    // ── USB constants ───────────────────────────────────────────────────
+    // ── Framing + send ─────────────────────────────────────────────────
 
-    static constexpr int INTERFACE_NUM = 1;
-    static constexpr uint8_t EP_OUT    = 0x01;
-    static constexpr uint8_t EP_IN     = 0x81;
+    template <typename T>
+    bool finish_and_send(flatbuffers::FlatBufferBuilder& fbb,
+                         flatbuffers::Offset<T> frame) {
+        fbb.FinishSizePrefixed(frame);
 
-    // ── USB receive callback ────────────────────────────────────────────
+        uint8_t wire[protocol::MAX_FRAME_LEN + 6];
+        size_t  wpos = 0;
+        struct {
+            uint8_t* buf; size_t& pos;
+            void write(const uint8_t* data, size_t len) {
+                std::memcpy(buf + pos, data, len); pos += len;
+            }
+        } writer{wire, wpos};
 
-    void on_usb_rx(libusb_transfer* xfer)
-    {
-        if (xfer->status != LIBUSB_TRANSFER_COMPLETED) {
-            spdlog::warn("[NuedcSlave] RX transfer status={}", (int)xfer->status);
-            if (running_.load(std::memory_order::relaxed))
-                libusb_submit_transfer(xfer); // resubmit
-            return;
-        }
-
-        // Feed raw bytes into protocol decoder
-        decoder_.feed(xfer->buffer, xfer->actual_length);
-
-        // Resubmit for next reception
-        if (running_.load(std::memory_order::relaxed))
-            libusb_submit_transfer(xfer);
+        protocol::protocol_encode(writer, fbb.GetBufferPointer(), fbb.GetSize());
+        return transport_.send(wire, wpos);
     }
 
-    // ── Protocol frame handler (called by ProtocolDecoder) ──────────────
+    // ── Protocol decoder callback (on USB bg thread) ───────────────────
 
-    void on_frame(const uint8_t* data, size_t len)
-    {
-        // Verify FlatBuffer
-        flatbuffers::Verifier verifier(data, len);
-        if (!verifier.VerifySizePrefixedBuffer<Protocol::SlaveToHost::SlaveToHostFrame>(nullptr))
+    friend class protocol::ProtocolDecoder<NuedcSlave>;
+    void on_frame(const uint8_t* data, size_t len) {
+        RxFrame f;
+        if (len > sizeof(f.data)) return;
+        std::memcpy(f.data, data, len);
+        f.len = len;
+        if (!rx_ring_.push(f))
+            spdlog::warn("[NuedcSlave] RX ring full, frame dropped");
+    }
+
+    // ── Frame dispatch (main thread, Handler by ref) ───────────────────
+
+    void dispatch(const uint8_t* data, size_t len) {
+        flatbuffers::Verifier v(data, len);
+        if (!v.VerifySizePrefixedBuffer<Protocol::SlaveToHost::SlaveToHostFrame>(nullptr))
             return;
 
-        auto frame = flatbuffers::GetSizePrefixedRoot<Protocol::SlaveToHost::SlaveToHostFrame>(data);
-        if (!frame || !frame->payload())
-            return;
+        auto frame = flatbuffers::GetSizePrefixedRoot<
+            Protocol::SlaveToHost::SlaveToHostFrame>(data);
+        if (!frame || !frame->payload()) return;
 
         switch (frame->payload_type()) {
-        case Protocol::SlaveToHost::MsgPayload::ImuPack: {
-            auto imu = frame->payload_as_ImuPack();
-            if (imu)
-                on_imu(imu->accel_x(), imu->accel_y(), imu->accel_z(),
-                       imu->gyro_x(), imu->gyro_y(), imu->gyro_z());
+        case Protocol::SlaveToHost::MsgPayload::ImuPack:
+            if (auto* p = frame->payload_as_ImuPack(); p)
+                handle_imu(p);
             break;
-        }
-        case Protocol::SlaveToHost::MsgPayload::EncoderPack: {
-            auto enc = frame->payload_as_EncoderPack();
-            if (enc)
-                on_encoder(enc->encoder_id(), enc->velocity_rad_s());
+        case Protocol::SlaveToHost::MsgPayload::EncoderPack:
+            if (auto* p = frame->payload_as_EncoderPack(); p)
+                handle_encoder(p);
             break;
-        }
-        case Protocol::SlaveToHost::MsgPayload::AdcPack: {
-            auto adc = frame->payload_as_AdcPack();
-            if (adc && adc->channels())
-                on_adc(adc->adc_idx(), adc->channels()->data(), adc->channels()->size());
+        case Protocol::SlaveToHost::MsgPayload::AdcPack:
+            if (auto* p = frame->payload_as_AdcPack(); p)
+                handle_adc(p);
             break;
-        }
-        case Protocol::SlaveToHost::MsgPayload::CanPack: {
-            auto can = frame->payload_as_CanPack();
-            if (can && can->rx_data())
-                on_can_rx(can->can_idx(), can->can_id(), can->can_dlc(),
-                          can->is_extended(), can->is_rtr(), can->rx_data()->data());
+        case Protocol::SlaveToHost::MsgPayload::CanPack:
+            if (auto* p = frame->payload_as_CanPack(); p)
+                handle_can_rx(p);
             break;
-        }
-        case Protocol::SlaveToHost::MsgPayload::UartPack: {
-            auto uart = frame->payload_as_UartPack();
-            if (uart && uart->rx_data())
-                on_uart_rx(uart->uart_idx(), uart->rx_data()->data(), uart->rx_data()->size());
+        case Protocol::SlaveToHost::MsgPayload::UartPack:
+            if (auto* p = frame->payload_as_UartPack(); p)
+                handle_uart_rx(p);
             break;
-        }
-        default:
-            break;
+        default: break;
         }
     }
 
-    // ── Send helper ─────────────────────────────────────────────────────
+    // ── Handler dispatch: h.method(args) — direct call, fully inlined ──
 
-    void send_frame(const uint8_t* size_prefixed_buf, size_t len)
-    {
-        // Build wire frame: 0x5A | size_prefixed_flatbuf | 0xA5
-        std::vector<uint8_t> wire;
-        wire.reserve(1 + len + 1);
-        wire.push_back(0x5A);
-        wire.insert(wire.end(), size_prefixed_buf, size_prefixed_buf + len);
-        wire.push_back(0xA5);
-
-        // Synchronous bulk send
-        int transferred = 0;
-        int ret = libusb_bulk_transfer(handle_, EP_OUT,
-                                       const_cast<uint8_t*>(wire.data()),
-                                       static_cast<int>(wire.size()),
-                                       &transferred, 100);
-        if (ret != 0) {
-            spdlog::error("[NuedcSlave] TX failed: {}", ret);
-        }
+    void handle_imu(auto* p) {
+        if constexpr (requires(Handler& h, float ax, float ay, float az,
+                               float gx, float gy, float gz) {
+                h.handle_imu(ax, ay, az, gx, gy, gz); })
+            handler_.handle_imu(
+                p->accel_x(), p->accel_y(), p->accel_z(),
+                p->gyro_x(),  p->gyro_y(),  p->gyro_z());
     }
 
-    // ── Members ─────────────────────────────────────────────────────────
+    void handle_encoder(auto* p) {
+        if constexpr (requires(Handler& h, uint8_t id, float v) {
+                h.handle_encoder(id, v); })
+            handler_.handle_encoder(p->encoder_id(), p->velocity_rad_s());
+    }
 
-    libusb_context* ctx_           = nullptr;
-    libusb_device_handle* handle_  = nullptr;
-    libusb_transfer* recv_xfer_    = nullptr;
-    uint8_t recv_buf_[512]{};
+    void handle_adc(auto* p) {
+        if constexpr (requires(Handler& h, uint8_t idx, const uint16_t* ch, size_t n) {
+                h.handle_adc(idx, ch, n); })
+            if (p->channels())
+                handler_.handle_adc(p->adc_idx(), p->channels()->data(), p->channels()->size());
+    }
 
-    std::atomic<bool> running_{false};
+    void handle_can_rx(auto* p) {
+        if constexpr (requires(Handler& h, uint8_t idx, uint32_t id, uint8_t dlc,
+                               bool ext, bool rtr, const uint8_t* d) {
+                h.handle_can_rx(idx, id, dlc, ext, rtr, d); })
+            if (p->rx_data())
+                handler_.handle_can_rx(
+                    p->can_idx(), p->can_id(), p->can_dlc(),
+                    p->is_extended(), p->is_rtr(), p->rx_data()->data());
+    }
 
-    protocol::ProtocolDecoder<NuedcSlave> decoder_;
-    flatbuffers::FlatBufferBuilder fbb_;
+    void handle_uart_rx(auto* p) {
+        if constexpr (requires(Handler& h, uint8_t idx, const uint8_t* d, size_t n) {
+                h.handle_uart_rx(idx, d, n); })
+            if (p->rx_data())
+                handler_.handle_uart_rx(p->uart_idx(), p->rx_data()->data(), p->rx_data()->size());
+    }
+
+    // ── Members ────────────────────────────────────────────────────────
+
+    Handler&                                   handler_;
+    transport::UsbTransport                    transport_;
+    protocol::ProtocolDecoder<NuedcSlave>      decoder_;
+    nuedc::RingBuffer<RxFrame, RX_RING_SIZE>  rx_ring_;
 };
 
-} // namespace nuedc
+}  // namespace nuedc
 
-#endif // NUEDC_HAS_LIBUSB
+#endif  // NUEDC_HAS_LIBUSB

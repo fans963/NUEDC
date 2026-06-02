@@ -13,6 +13,21 @@ static constexpr uint8_t FRAME_MAGIC1 = 0x5A;
 static constexpr uint8_t FRAME_MAGIC2 = 0xA5;
 static constexpr size_t MAX_FRAME_LEN = 512;
 
+// ── Encode ────────────────────────────────────────────────────────────
+// W must provide: void write(const uint8_t *data, size_t len)
+// buf: size-prefixed FlatBuffer (from fbb.FinishSizePrefixed + GetBufferPointer)
+// len: total length including 4-byte size prefix (fbb.GetSize())
+
+template <typename W>
+void protocol_encode(W &writer, const uint8_t *buf, size_t len) {
+    uint8_t head = FRAME_MAGIC1;
+    uint8_t tail = FRAME_MAGIC2;
+    writer.write(&head, 1);
+    writer.write(buf, len);
+    writer.write(&tail, 1);
+}
+
+// ── Decode ────────────────────────────────────────────────────────────
 // H must provide: void on_frame(const uint8_t *data, size_t len)
 // on_frame() receives the size-prefixed buffer (size_prefix + body)
 // so callers can use flatbuffers::GetSizePrefixedRoot() directly.

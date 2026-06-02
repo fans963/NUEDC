@@ -4,3 +4,4 @@ build
 .claude
 .vscode
 compile_commands.json
+qemu**.core

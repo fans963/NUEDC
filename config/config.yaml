@@ -1,34 +1,6 @@
-loop_hz: 1000
-
 components:
-  - Camera -> camera1
-  - Motor -> motor
-  - Heartbeat -> heartbeat
-  - PredefinedMsgProvider -> status
   - Car -> car0
 
-camera1:
-  device: /dev/video0
-  width: 1280
-  height: 720
-  fps: 60
-
-camera2:
-  device: /dev/video2
-  width: 640
-  height: 480
-  fps: 30
-
-motor:
-  kp: 1.2
-  ki: 0.01
-  kd: 0.5
-
-# heartbeat:
-#   interval_ms: 2000
-
-status:
-  loop_hz: 1000
-
 car0:
-  
+  pid: 0x00b9
+  vid: 0x3277

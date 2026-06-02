@@ -5,7 +5,6 @@
     "eigen3",
     "spdlog",
     "ryml",
-    "mp-units",
     "hfsm2",
     "magic-enum",
     "mimalloc",
@@ -20,8 +19,7 @@
       "features": [
         "thread",
         "intrinsics",
-        "jpeg",
-        "png"
+        "eigen"
       ]
     }
   ]

@@ -8,25 +8,115 @@
     "configurePresets": [
         {
             "name": "native",
-            "displayName": "Native (x86_64, host compiler)",
-            "description": "Build for the local machine using system GCC 16",
+            "displayName": "Native (x86_64, dynamic)",
+            "description": "Local dev build — dynamic linking for fast incremental compile",
             "generator": "Ninja",
-            "binaryDir": "${sourceDir}/build/native",
+            "binaryDir": "${sourceDir}/build",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
+                "NUEDC_STATIC_LINKING": "OFF",
                 "VCPKG_TARGET_TRIPLET": "native-gcc16",
                 "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/triplets",
                 "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
             }
         },
         {
-            "name": "cross-aarch64",
-            "displayName": "Cross (aarch64, Cortex-A72)",
-            "description": "Cross-compile for aarch64 target board (Raspberry Pi 4 etc.)",
+            "name": "native-static",
+            "displayName": "Native (x86_64, static)",
+            "description": "Local release build — static linking, self-contained binary",
             "generator": "Ninja",
-            "binaryDir": "${sourceDir}/build/aarch64",
+            "binaryDir": "${sourceDir}/build",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
+                "NUEDC_STATIC_LINKING": "ON",
+                "VCPKG_TARGET_TRIPLET": "native-gcc16-static",
+                "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/triplets",
+                "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+            }
+        },
+        {
+            "name": "native-debug",
+            "displayName": "Native (x86_64, debug)",
+            "description": "Local debug build — dynamic, -O0 -g",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "NUEDC_STATIC_LINKING": "OFF",
+                "VCPKG_TARGET_TRIPLET": "native-gcc16",
+                "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/triplets",
+                "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+            }
+        },
+        {
+            "name": "clang",
+            "displayName": "Native Clang (x86_64, dynamic)",
+            "description": "Clang 22 — dynamic linking for fast dev iteration",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "NUEDC_STATIC_LINKING": "OFF",
+                "VCPKG_TARGET_TRIPLET": "native-clang-dynamic",
+                "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/triplets",
+                "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+                "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/toolchains/native-clang.toolchain.cmake"
+            }
+        },
+        {
+            "name": "clang-static",
+            "displayName": "Native Clang (x86_64, static, full LTO)",
+            "description": "Clang 22 — static single binary, maximum optimization",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "NUEDC_STATIC_LINKING": "ON",
+                "VCPKG_TARGET_TRIPLET": "native-clang-static",
+                "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/triplets",
+                "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+                "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/toolchains/native-clang.toolchain.cmake"
+            }
+        },
+        {
+            "name": "clang-debug",
+            "displayName": "Native Clang (x86_64, debug)",
+            "description": "Clang 22 — dynamic, -O0 -g, ASan-compatible",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "NUEDC_STATIC_LINKING": "OFF",
+                "VCPKG_TARGET_TRIPLET": "native-clang-dynamic",
+                "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/triplets",
+                "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+                "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/toolchains/native-clang.toolchain.cmake"
+            }
+        },
+        {
+            "name": "aarch64",
+            "displayName": "AArch64 (dynamic, Cortex-A76)",
+            "description": "Cross-compile for aarch64 with dynamic linking + bundled .so",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "NUEDC_STATIC_LINKING": "OFF",
+                "VCPKG_TARGET_TRIPLET": "aarch64-native-gcc16-dynamic",
+                "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/triplets",
+                "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+                "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/toolchains/aarch64-gcc16.toolchain.cmake"
+            }
+        },
+        {
+            "name": "aarch64-static",
+            "displayName": "AArch64 (static, Cortex-A72)",
+            "description": "Cross-compile for aarch64 — static, single binary + glibc bundle",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "NUEDC_STATIC_LINKING": "ON",
                 "VCPKG_TARGET_TRIPLET": "aarch64-native-gcc16",
                 "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/triplets",
                 "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
@@ -40,8 +130,32 @@
             "configurePreset": "native"
         },
         {
-            "name": "cross-aarch64",
-            "configurePreset": "cross-aarch64"
+            "name": "native-static",
+            "configurePreset": "native-static"
+        },
+        {
+            "name": "native-debug",
+            "configurePreset": "native-debug"
+        },
+        {
+            "name": "clang",
+            "configurePreset": "clang"
+        },
+        {
+            "name": "clang-static",
+            "configurePreset": "clang-static"
+        },
+        {
+            "name": "clang-debug",
+            "configurePreset": "clang-debug"
+        },
+        {
+            "name": "aarch64",
+            "configurePreset": "aarch64"
+        },
+        {
+            "name": "aarch64-static",
+            "configurePreset": "aarch64-static"
         }
     ]
 }

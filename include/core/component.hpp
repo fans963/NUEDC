@@ -33,23 +33,67 @@ inline std::shared_ptr<spdlog::logger> shared_logger() {
     return logger;
 }
 
-template <typename T>
-inline T node_val(ryml::NodeRef n, T default_val = T { }) {
-    if (n.readable() && n.has_val()) {
-        T val;
-        n >> val;
-        return val;
-    }
-    return default_val;
-}
+// ── Config access helper ──────────────────────────────────────────────
+// Thin wrapper over ryml::NodeRef. Missing keys at any depth emit a warning.
+//
+//   Config config{root};
+//   auto vid = config["vid"].get<uint16_t>(0x1209);
+//   auto wb  = config["chassis"]["wheel_base"].get<double>(0.2);
+//   auto dev = config["camera"]["device"].str("/dev/video0");
 
-inline std::string node_str(ryml::NodeRef n, const char* default_val = "") {
-    if (n.readable() && n.has_val()) {
-        c4::csubstr s = n.val();
-        return std::string(s.begin(), s.size());
+struct Config {
+    ryml::NodeRef root;
+
+    struct Key {
+        ryml::NodeRef node;
+        std::string   path;
+        bool          dead = false;
+
+        Key operator[](const char* sub) {
+            if (dead) return {node, path + "/" + sub, true};
+            auto child = node[sub];
+            if (child.invalid() || !child.readable()) {
+                warn(path + "/" + sub);
+                return {node, path + "/" + sub, true};
+            }
+            return {node.find_child(c4::to_csubstr(sub)), path + "/" + sub, false};
+        }
+
+        template <typename T>
+        T get(T def) const {
+            if (!dead && !node.invalid() && node.readable() && node.has_val()) {
+                T val; node >> val; return val;
+            }
+            if (dead || !node.has_val()) warn(path);
+            return def;
+        }
+
+        std::string str(const char* def = "") const {
+            if (!dead && !node.invalid() && node.readable() && node.has_val()) {
+                c4::csubstr s = node.val();
+                return {s.begin(), s.size()};
+            }
+            if (dead || !node.has_val()) warn(path);
+            return def;
+        }
+
+        static void warn(const std::string& p) {
+            if (tl_component_name)
+                spdlog::warn("[{}] config key '{}' not set, using default", tl_component_name, p);
+            else
+                spdlog::warn("config key '{}' not set, using default", p);
+        }
+    };
+
+    Key operator[](const char* key) {
+        auto child = root[key];
+        if (!child.invalid() && child.readable())
+            return {root.find_child(c4::to_csubstr(key)), key, false};
+        Key::warn(key);
+        return {root, key, true};
     }
-    return default_val;
-}
+};
+
 
 class Component {
 public:
@@ -158,7 +202,7 @@ public:
             act_ = true;
             return reinterpret_cast<void*>(&d_);
         }
-        std::aligned_storage_t<sizeof(T), alignof(T)> d_;
+        alignas(T) std::byte d_[sizeof(T)];
         bool act_ = false;
     };
 
