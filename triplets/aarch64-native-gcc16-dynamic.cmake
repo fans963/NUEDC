@@ -10,8 +10,12 @@ set(VCPKG_C_FLAGS "-O3 -flto -march=armv8-a -mtune=cortex-a76 -ffunction-section
 set(VCPKG_CXX_FLAGS "-O3 -flto -march=armv8-a -mtune=cortex-a76 -ffunction-sections -fdata-sections")
 set(VCPKG_LINKER_FLAGS "-flto -Wl,--gc-sections")
 
+set(VCPKG_CMAKE_CONFIGURE_OPTIONS
+    "-DMI_NO_OPT_ARCH=ON"  # mimalloc: disable armv8.1-a LSE, stick to armv8-a
+)
+
 if("$ENV{NUEDC_USE_SYSROOT}" STREQUAL "ON")
-    set(VCPKG_CMAKE_CONFIGURE_OPTIONS
+    list(APPEND VCPKG_CMAKE_CONFIGURE_OPTIONS
         "-DCMAKE_SYSROOT=${CMAKE_CURRENT_LIST_DIR}/../sysroot"
     )
 endif()

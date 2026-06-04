@@ -1,18 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
 
-# Automatically set CMAKE_TOOLCHAIN_FILE if VCPKG_ROOT is not set in the environment
-if(NOT DEFINED CMAKE_TOOLCHAIN_FILE OR CMAKE_TOOLCHAIN_FILE STREQUAL "/scripts/buildsystems/vcpkg.cmake" OR CMAKE_TOOLCHAIN_FILE STREQUAL "")
-    if(DEFINED ENV{VCPKG_ROOT} AND EXISTS "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
-        set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE FILEPATH "vcpkg toolchain" FORCE)
-    elseif(EXISTS "$ENV{HOME}/.local/share/vcpkg/scripts/buildsystems/vcpkg.cmake")
-        set(CMAKE_TOOLCHAIN_FILE "$ENV{HOME}/.local/share/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE FILEPATH "vcpkg toolchain" FORCE)
-    elseif(EXISTS "/usr/share/vcpkg/scripts/buildsystems/vcpkg.cmake")
-        set(CMAKE_TOOLCHAIN_FILE "/usr/share/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE FILEPATH "vcpkg toolchain" FORCE)
-    elseif(EXISTS "/opt/vcpkg/scripts/buildsystems/vcpkg.cmake")
-        set(CMAKE_TOOLCHAIN_FILE "/opt/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE FILEPATH "vcpkg toolchain" FORCE)
-    endif()
-endif()
-
 project(NUEDC LANGUAGES CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -158,10 +145,18 @@ if(NOT NUEDC_STATIC_LINKING)
     )
 endif()
 
-# ── Cross-compile aarch64: bundle glibc + wrapper ────────────────────
+# ── Cross-compile aarch64: bundle runtime libs + wrapper ────────────
 if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
-    set(GLIBC_DIR "/usr/aarch64-linux-gnu/lib")
-    set(GLIBC_FILES
+    # Find libstdc++ / libgcc from the cross-compiler's search path
+    execute_process(
+        COMMAND ${CMAKE_CXX_COMPILER} -print-file-name=libstdc++.so.6
+        OUTPUT_VARIABLE _libstdcxx OUTPUT_STRIP_TRAILING_WHITESPACE)
+    execute_process(
+        COMMAND ${CMAKE_CXX_COMPILER} -print-file-name=libgcc_s.so.1
+        OUTPUT_VARIABLE _libgcc OUTPUT_STRIP_TRAILING_WHITESPACE)
+
+    set(_runtime_libs
+        # glibc core
         "ld-linux-aarch64.so.1"
         "libc.so.6"
         "libm.so.6"
@@ -171,15 +166,25 @@ if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
         "libresolv.so.2"
         "libnss_files.so.2"
     )
+
+    # Add C++ runtime if found
+    if(EXISTS "${_libstdcxx}")
+        list(APPEND _runtime_libs "${_libstdcxx}")
+    endif()
+    if(EXISTS "${_libgcc}")
+        list(APPEND _runtime_libs "${_libgcc}")
+    endif()
+
     install(CODE "
-        file(MAKE_DIRECTORY \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}\")
-        foreach(f ${GLIBC_FILES})
-            set(_src \"${GLIBC_DIR}/\${f}\")
+        set(_dst \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}\")
+        file(MAKE_DIRECTORY \${_dst})
+        foreach(_src ${_runtime_libs})
             if(EXISTS \"\${_src}\")
-                execute_process(COMMAND bash -c \"cp -Lv \${_src} \${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/\")
+                execute_process(COMMAND \${CMAKE_COMMAND} -E copy
+                    \"\${_src}\" \"\${_dst}/\")
             endif()
         endforeach()
-    ")
+    " COMPONENT runtime)
 
     install(CODE "
         file(WRITE \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/run.sh\"
@@ -187,8 +192,8 @@ if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
 DIR=\\\$(dirname \\\$(readlink -f \\\$0))
 exec \\\$DIR/../lib/ld-linux-aarch64.so.1 --library-path \\\$DIR/../lib \\\$DIR/main \\\$@
 \")
-        execute_process(COMMAND chmod +x \${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/run.sh)
-    ")
+        execute_process(COMMAND chmod +x \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/run.sh\")
+    " COMPONENT runtime)
 endif()
 
 # ====================== 打印配置信息 ======================
