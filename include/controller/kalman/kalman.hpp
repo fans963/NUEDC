@@ -4,23 +4,30 @@
 #include "core/component_registry.hpp"
 #include <Eigen/Dense>
 #include <ryml/ryml.hpp>
+#include <vector>
 
 namespace nuedcs::controller::kalman {
 
-inline Eigen::Matrix2d load_matrix2d(ryml::NodeRef node, const char* name, const Eigen::Matrix2d& default_val) {
+template <int Rows, int Cols>
+inline Eigen::Matrix<double, Rows, Cols> load_matrix(ryml::NodeRef node, const char* name, const Eigen::Matrix<double, Rows, Cols>& default_val) {
     if (node.has_child(c4::to_csubstr(name))) {
         auto child = node[name];
-        if (child.is_seq() && child.num_children() >= 4) {
-            double val[4];
+        constexpr int expected_elements = Rows * Cols;
+        if (child.is_seq() && child.num_children() >= expected_elements) {
+            std::vector<double> val(expected_elements);
             int idx = 0;
             for (auto sub_node : child.children()) {
-                if (idx < 4) {
+                if (idx < expected_elements) {
                     sub_node >> val[idx++];
                 }
             }
-            if (idx == 4) {
-                Eigen::Matrix2d mat;
-                mat << val[0], val[1], val[2], val[3];
+            if (idx == expected_elements) {
+                Eigen::Matrix<double, Rows, Cols> mat;
+                for (int r = 0; r < Rows; ++r) {
+                    for (int c = 0; c < Cols; ++c) {
+                        mat(r, c) = val[r * Cols + c];
+                    }
+                }
                 return mat;
             }
         }
@@ -28,20 +35,23 @@ inline Eigen::Matrix2d load_matrix2d(ryml::NodeRef node, const char* name, const
     return default_val;
 }
 
-inline Eigen::Vector2d load_vector2d(ryml::NodeRef node, const char* name, const Eigen::Vector2d& default_val) {
+template <int Dim>
+inline Eigen::Vector<double, Dim> load_vector(ryml::NodeRef node, const char* name, const Eigen::Vector<double, Dim>& default_val) {
     if (node.has_child(c4::to_csubstr(name))) {
         auto child = node[name];
-        if (child.is_seq() && child.num_children() >= 2) {
-            double val[2];
+        if (child.is_seq() && child.num_children() >= Dim) {
+            std::vector<double> val(Dim);
             int idx = 0;
             for (auto sub_node : child.children()) {
-                if (idx < 2) {
+                if (idx < Dim) {
                     sub_node >> val[idx++];
                 }
             }
-            if (idx == 2) {
-                Eigen::Vector2d vec;
-                vec << val[0], val[1];
+            if (idx == Dim) {
+                Eigen::Vector<double, Dim> vec;
+                for (int i = 0; i < Dim; ++i) {
+                    vec(i) = val[i];
+                }
                 return vec;
             }
         }
@@ -49,15 +59,38 @@ inline Eigen::Vector2d load_vector2d(ryml::NodeRef node, const char* name, const
     return default_val;
 }
 
+template <int N, int M, int L = 0>
 class KalmanFilter : public core::Component {
 public:
+    // Static Eigen type definitions
+    using StateVector = Eigen::Vector<double, N>;
+    using StateMatrix = Eigen::Matrix<double, N, N>;
+    using MeasVector  = Eigen::Vector<double, M>;
+    using MeasMatrix  = Eigen::Matrix<double, M, N>;
+    using MeasNoiseMatrix = Eigen::Matrix<double, M, M>;
+    using CtrlVector  = Eigen::Vector<double, L>;
+    using CtrlMatrix  = Eigen::Matrix<double, N, L>;
+
     // Manual/direct constructor for backward compatibility
-    KalmanFilter(double dt, const Eigen::Matrix2d& A, const Eigen::Matrix2d& Q,
-                 const Eigen::Matrix2d& R, const Eigen::Matrix2d& H, const Eigen::Matrix2d& B,
-                 const Eigen::Vector2d& u)
+    KalmanFilter(double dt, const StateMatrix& A, const StateMatrix& Q,
+                 const MeasNoiseMatrix& R, const MeasMatrix& H, const CtrlMatrix& B,
+                 const CtrlVector& u)
         : dt_(dt), A_(A), Q_(Q), R_(R), H_(H), B_(B), u_(u) {
-        x_ = Eigen::Vector2d::Zero();
-        P_ = Eigen::Matrix2d::Identity();
+        x_ = StateVector::Zero();
+        P_ = StateMatrix::Identity();
+    }
+
+    // Manual constructor without control input (default L = 0)
+    KalmanFilter(double dt, const StateMatrix& A, const StateMatrix& Q,
+                 const MeasNoiseMatrix& R, const MeasMatrix& H)
+        requires(L == 0)
+        : dt_(dt), A_(A), Q_(Q), R_(R), H_(H) {
+        x_ = StateVector::Zero();
+        P_ = StateMatrix::Identity();
+        if constexpr (L > 0) {
+            B_ = CtrlMatrix::Zero();
+            u_ = CtrlVector::Zero();
+        }
     }
 
     // Component constructor
@@ -65,19 +98,25 @@ public:
         auto c = core::Config{config};
 
         dt_ = c["dt"].get(0.01);
-        A_  = load_matrix2d(config, "A", Eigen::Matrix2d::Identity());
-        Q_  = load_matrix2d(config, "Q", Eigen::Matrix2d::Identity());
-        R_  = load_matrix2d(config, "R", Eigen::Matrix2d::Identity());
-        H_  = load_matrix2d(config, "H", Eigen::Matrix2d::Identity());
-        B_  = load_matrix2d(config, "B", Eigen::Matrix2d::Zero());
-        u_  = load_vector2d(config, "u", Eigen::Vector2d::Zero());
+        A_  = load_matrix<N, N>(config, "A", StateMatrix::Identity());
+        Q_  = load_matrix<N, N>(config, "Q", StateMatrix::Identity());
+        R_  = load_matrix<M, M>(config, "R", MeasNoiseMatrix::Identity());
+        H_  = load_matrix<M, N>(config, "H", MeasMatrix::Identity());
 
-        x_  = load_vector2d(config, "x0", Eigen::Vector2d::Zero());
-        P_  = load_matrix2d(config, "P0", Eigen::Matrix2d::Identity());
+        if constexpr (L > 0) {
+            B_ = load_matrix<N, L>(config, "B", CtrlMatrix::Zero());
+            u_ = load_vector<L>(config, "u", CtrlVector::Zero());
+        }
+
+        x_  = load_vector<N>(config, "x0", StateVector::Zero());
+        P_  = load_matrix<N, N>(config, "P0", StateMatrix::Identity());
 
         // Register Inputs
         register_input(c["measurement"].str(), z_in_);
-        register_input(c["control"].str(), u_in_, false);
+        
+        if constexpr (L > 0) {
+            register_input(c["control"].str(), u_in_, false);
+        }
 
         // Register Outputs
         register_output(c["state"].str(), state_out_, x_);
@@ -85,8 +124,10 @@ public:
     }
 
     void update() override {
-        if (u_in_.ready()) {
-            u_ = *u_in_;
+        if constexpr (L > 0) {
+            if (u_in_.ready()) {
+                u_ = *u_in_;
+            }
         }
 
         predict();
@@ -100,61 +141,73 @@ public:
     }
 
     void predict() {
-        x_ = A_ * x_ + B_ * u_;
+        if constexpr (L > 0) {
+            x_ = A_ * x_ + B_ * u_;
+        } else {
+            x_ = A_ * x_;
+        }
         P_ = A_ * P_ * A_.transpose() + Q_;
     }
 
-    void update(const Eigen::Vector2d& z) {
-        Eigen::Matrix2d S = H_ * P_ * H_.transpose() + R_;
-        Eigen::Matrix2d K = S.ldlt().solve(P_ * H_.transpose());
+    void update(const MeasVector& z) {
+        Eigen::Matrix<double, M, M> S = H_ * P_ * H_.transpose() + R_;
+        Eigen::Matrix<double, N, M> K = S.ldlt().solve(P_ * H_.transpose());
         x_ += K * (z - H_ * x_);
-        P_ = (Eigen::Matrix2d::Identity() - K * H_) * P_;
+        P_ = (StateMatrix::Identity() - K * H_) * P_;
     }
 
-    const Eigen::Vector2d& state() const { return x_; }
-    const Eigen::Matrix2d& covariance() const { return P_; }
+    const StateVector& state() const { return x_; }
+    const StateMatrix& covariance() const { return P_; }
 
     double dt() const { return dt_; }
     void set_dt(double dt) { dt_ = dt; }
 
-    const Eigen::Matrix2d& A() const { return A_; }
-    void set_A(const Eigen::Matrix2d& A) { A_ = A; }
+    const StateMatrix& A() const { return A_; }
+    void set_A(const StateMatrix& A) { A_ = A; }
 
-    const Eigen::Matrix2d& Q() const { return Q_; }
-    void set_Q(const Eigen::Matrix2d& Q) { Q_ = Q; }
+    const StateMatrix& Q() const { return Q_; }
+    void set_Q(const StateMatrix& Q) { Q_ = Q; }
 
-    const Eigen::Matrix2d& R() const { return R_; }
-    void set_R(const Eigen::Matrix2d& R) { R_ = R; }
+    const MeasNoiseMatrix& R() const { return R_; }
+    void set_R(const MeasNoiseMatrix& R) { R_ = R; }
 
-    const Eigen::Matrix2d& H() const { return H_; }
-    void set_H(const Eigen::Matrix2d& H) { H_ = H; }
+    const MeasMatrix& H() const { return H_; }
+    void set_H(const MeasMatrix& H) { H_ = H; }
 
-    const Eigen::Matrix2d& B() const { return B_; }
-    void set_B(const Eigen::Matrix2d& B) { B_ = B; }
+    const CtrlMatrix& B() const { return B_; }
+    void set_B(const CtrlMatrix& B) { B_ = B; }
 
-    const Eigen::Vector2d& u() const { return u_; }
-    void set_u(const Eigen::Vector2d& u) { u_ = u; }
+    const CtrlVector& u() const { return u_; }
+    void set_u(const CtrlVector& u) { u_ = u; }
 
-    void set_state(const Eigen::Vector2d& x) { x_ = x; }
-    void set_covariance(const Eigen::Matrix2d& P) { P_ = P; }
+    void set_state(const StateVector& x) { x_ = x; }
+    void set_covariance(const StateMatrix& P) { P_ = P; }
 
 private:
     double dt_;
-    Eigen::Matrix2d A_, Q_, R_, H_, B_;
-    Eigen::Vector2d x_, u_;
-    Eigen::Matrix2d P_;
+    StateMatrix A_, Q_;
+    MeasNoiseMatrix R_;
+    MeasMatrix H_;
+    
+    CtrlMatrix B_;
+    CtrlVector u_;
+    
+    StateVector x_;
+    StateMatrix P_;
 
-    InputInterface<Eigen::Vector2d> z_in_;
-    InputInterface<Eigen::Vector2d> u_in_;
+    InputInterface<MeasVector> z_in_;
+    InputInterface<CtrlVector> u_in_;
 
-    OutputInterface<Eigen::Vector2d> state_out_;
-    OutputInterface<Eigen::Matrix2d> covariance_out_;
+    OutputInterface<StateVector> state_out_;
+    OutputInterface<StateMatrix> covariance_out_;
 };
+
+using KalmanFilter2D = KalmanFilter<2, 2, 0>;
 
 } // namespace nuedcs::controller::kalman
 
-REGISTER_COMPONENT(nuedcs::controller::kalman, KalmanFilter)
+REGISTER_COMPONENT(nuedcs::controller::kalman, KalmanFilter2D)
 
 namespace Kalman {
-    using KalmanFilter = ::nuedcs::controller::kalman::KalmanFilter;
+    using KalmanFilter = ::nuedcs::controller::kalman::KalmanFilter<2, 2, 0>;
 }

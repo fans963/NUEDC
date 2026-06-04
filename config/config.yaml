@@ -4,3 +4,45 @@ components:
 car0:
   pid: 0x00b9
   vid: 0x3277
+
+# KalmanFilter 示例配置
+# 若要启用该组件，需在 components 列表中添加：
+#   - KalmanFilter -> kalman0
+kalman0:
+  dt: 0.01
+
+  # 状态转移矩阵 A (2x2, 行优先展开: [a00, a01, a10, a11])
+  A: [1.0, 0.01,
+      0.0, 1.0]
+
+  # 过程噪声协方差矩阵 Q (2x2)
+  Q: [0.001, 0.0,
+      0.0,   0.001]
+
+  # 测量噪声协方差矩阵 R (2x2)
+  R: [0.1, 0.0,
+      0.0, 0.1]
+
+  # 测量矩阵 H (2x2)
+  H: [1.0, 0.0,
+      0.0, 1.0]
+
+  # 控制矩阵 B (2x2)
+  B: [0.0, 0.0,
+      0.0, 0.0]
+
+  # 控制输入向量 u (2x1)
+  u: [0.0, 0.0]
+
+  # 初始状态估计 x0 (2x1)
+  x0: [0.0, 0.0]
+
+  # 初始协方差矩阵 P0 (2x2)
+  P0: [1.0, 0.0,
+       0.0, 1.0]
+
+  # 声明式数据流接口绑定路径
+  measurement: /sensor/pos_vel_meas  # 输入测量值 (必须为 Eigen::Vector2d 类型)
+  control: /chassis/control_u        # 可选输入控制量 (必须为 Eigen::Vector2d 类型)
+  state: /kalman/state               # 输出状态量 (类型为 Eigen::Vector2d)
+  covariance: /kalman/covariance     # 输出协方差 (类型为 Eigen::Matrix2d)
