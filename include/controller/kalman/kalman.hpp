@@ -1,12 +1,23 @@
 #pragma once
 
 #include <Eigen/Dense>
+#include <chrono>
+#include <optional>
 
 namespace nuedcs::controller::kalman {
 
-template <int N, int M = N, int L = N>
+template <typename T>
+concept MotionModel = requires(const T& m, double dt) {
+    m.A(dt);
+    m.B(dt);
+    m.Q(dt);
+};
+
+template <int N, int M, int L, typename Model>
+    requires MotionModel<Model>
 class KalmanFilter {
 public:
+    using Clock        = std::chrono::steady_clock;
     using StateVec     = Eigen::Vector<double, N>;
     using MeasVec      = Eigen::Vector<double, M>;
     using ControlVec   = Eigen::Vector<double, L>;
@@ -16,24 +27,20 @@ public:
     using StateMeasMat = Eigen::Matrix<double, N, M>;
     using StateCtrlMat = Eigen::Matrix<double, N, L>;
 
-    KalmanFilter() = default;
-
-    KalmanFilter(const StateMat& A, const StateMat& Q, const MeasMat& R, const MeasStateMat& H,
-        const StateCtrlMat& B = StateCtrlMat::Zero())
-        : A_(A)
-        , Q_(Q)
-        , R_(R)
-        , H_(H)
-        , B_(B) { }
+    explicit KalmanFilter(Model model, double dt = 0.01)
+        : model_(model)
+        , dt_(dt) { }
 
     void predict() {
-        x_ = A_ * x_;
-        P_ = A_ * P_ * A_.transpose() + Q_;
+        const double d = advance_clock();
+        x_             = model_.A(d) * x_;
+        P_             = model_.A(d) * P_ * model_.A(d).transpose() + model_.Q(d);
     }
 
     void predict(const ControlVec& u) {
-        x_ = A_ * x_ + B_ * u;
-        P_ = A_ * P_ * A_.transpose() + Q_;
+        const double d = advance_clock();
+        x_             = model_.A(d) * x_ + model_.B(d) * u;
+        P_             = model_.A(d) * P_ * model_.A(d).transpose() + model_.Q(d);
     }
 
     void update(const MeasVec& z) {
@@ -59,29 +66,57 @@ public:
     const StateMat& covariance() const { return P_; }
     void set_covariance(const StateMat& P) { P_ = P; }
 
-    const StateMat& A() const { return A_; }
-    const StateMat& Q() const { return Q_; }
-    const MeasMat& R() const { return R_; }
-    const MeasStateMat& H() const { return H_; }
-    const StateCtrlMat& B() const { return B_; }
+    double dt() const { return dt_; }
+    double t() const { return t_; }
 
-    void set_A(const StateMat& A) { A_ = A; }
-    void set_Q(const StateMat& Q) { Q_ = Q; }
-    void set_R(const MeasMat& R) { R_ = R; }
+    const MeasStateMat& H() const { return H_; }
+    const MeasMat& R() const { return R_; }
     void set_H(const MeasStateMat& H) { H_ = H; }
-    void set_B(const StateCtrlMat& B) { B_ = B; }
+    void set_R(const MeasMat& R) { R_ = R; }
+
+    Model& model() { return model_; }
+    const Model& model() const { return model_; }
 
 private:
-    StateMat A_     = StateMat::Identity();
-    StateMat Q_     = StateMat::Identity();
-    MeasMat R_      = MeasMat::Identity();
+    double advance_clock() {
+        const auto now = Clock::now();
+        if (last_time_.has_value()) dt_ = std::chrono::duration<double>(now - *last_time_).count();
+        last_time_ = now;
+        t_ += dt_;
+        return dt_;
+    }
+
+    Model model_;
+    double dt_ = 0.01;
+    double t_  = 0.0;
+    std::optional<Clock::time_point> last_time_;
+
     MeasStateMat H_ = MeasStateMat::Identity();
-    StateCtrlMat B_ = StateCtrlMat::Zero();
+    MeasMat R_      = MeasMat::Identity();
 
     StateVec x_ = StateVec::Zero();
     StateMat P_ = StateMat::Identity();
 };
 
-using KalmanFilter2D = KalmanFilter<2, 2, 0>;
+template <int N, int M = N, int L = N>
+struct ConstModel {
+    using StateMat     = Eigen::Matrix<double, N, N>;
+    using StateCtrlMat = Eigen::Matrix<double, N, L>;
+
+    StateMat A_     = StateMat::Identity();
+    StateCtrlMat B_ = StateCtrlMat::Zero();
+    StateMat Q_     = StateMat::Identity();
+
+    [[nodiscard]] const StateMat& A(double) const { return A_; }
+    [[nodiscard]] const StateCtrlMat& B(double) const { return B_; }
+    [[nodiscard]] const StateMat& Q(double) const { return Q_; }
+};
+
+template <int N, int M = N, int L = N>
+auto make_kalman_filter(double dt = 0.01) {
+    return KalmanFilter<N, M, L, ConstModel<N, M, L>>(ConstModel<N, M, L> { }, dt);
+}
+
+using KalmanFilter2D = KalmanFilter<2, 2, 2, ConstModel<2, 2, 2>>;
 
 } // namespace nuedcs::controller::kalman
