@@ -1,13 +1,21 @@
 #pragma once
 
-#include "component.hpp"
-
 #include <memory>
 #include <spdlog/spdlog.h>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
+#include <ryml/ryml.hpp>
+#include <ryml/ryml_std.hpp>
+
+// Forward declaration — avoids circular include with component.hpp.
+// The full definition of Component is only needed in the factory lambda
+// body, which lives in register_component_type<T>() template instantiation
+// inside component headers that already include component.hpp.
 namespace nuedcs::core {
+
+class Component;
 
 class ComponentRegistry {
 public:
@@ -18,20 +26,13 @@ public:
         return reg;
     }
 
-    void add(const std::string& type_name, Factory f) {
-        factories_[type_name] = f;
+    void add(std::string_view type_name, Factory f) {
+        factories_.emplace(std::string(type_name), f);
     }
 
     std::unique_ptr<Component> create(const std::string& type_name,
                                       const char* instance_name,
-                                      ryml::NodeRef config) const {
-        auto it = factories_.find(type_name);
-        if (it == factories_.end()) {
-            spdlog::error("[Registry] Unknown type: '{}'", type_name);
-            return nullptr;
-        }
-        return it->second(instance_name, config);
-    }
+                                      ryml::NodeRef config) const;
 
     bool has(const std::string& type_name) const {
         return factories_.count(type_name) > 0;

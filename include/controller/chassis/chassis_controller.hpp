@@ -1,7 +1,7 @@
 #pragma once
 
 #include "core/component.hpp"
-#include "core/component_registry.hpp"
+// component_registry.hpp is included transitively via component.hpp
 
 #include <algorithm>
 
@@ -76,5 +76,3 @@ private:
 };
 
 }  // namespace nuedcs::controller::chassis
-
-REGISTER_COMPONENT(nuedcs::controller::chassis, ChassisController)

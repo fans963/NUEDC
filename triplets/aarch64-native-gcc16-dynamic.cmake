@@ -6,8 +6,14 @@ set(VCPKG_CMAKE_SYSTEM_NAME Linux)
 
 set(VCPKG_CHAINLOAD_TOOLCHAIN_FILE "${CMAKE_CURRENT_LIST_DIR}/../toolchains/aarch64-gcc16.toolchain.cmake")
 
-set(VCPKG_C_FLAGS "-O3 -flto -march=armv8-a -mtune=cortex-a76 -ffunction-sections -fdata-sections")
-set(VCPKG_CXX_FLAGS "-O3 -flto -march=armv8-a -mtune=cortex-a76 -ffunction-sections -fdata-sections")
+# autotools 交叉编译：告诉 configure 目标平台
+set(VCPKG_MAKE_BUILD_TRIPLET aarch64-unknown-linux-gnu)
+
+# 将 CC/CXX 环境变量传递给 vcpkg 子进程（autotools 构建需要）
+set(VCPKG_ENV_PASSTHROUGH CC CXX)
+
+set(VCPKG_C_FLAGS "-O3 -flto -march=armv8-a -mtune=cortex-a72 -ffunction-sections -fdata-sections")
+set(VCPKG_CXX_FLAGS "-O3 -flto -march=armv8-a -mtune=cortex-a72 -ffunction-sections -fdata-sections")
 set(VCPKG_LINKER_FLAGS "-flto -Wl,--gc-sections")
 
 set(VCPKG_CMAKE_CONFIGURE_OPTIONS

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "core/component.hpp"
-#include "core/component_registry.hpp"
+// component_registry.hpp is included transitively via component.hpp
 #include "devices/bmi088.hpp"
 #include "devices/can_motor.hpp"
 #include "devices/encoder_motor.hpp"
@@ -219,5 +219,3 @@ private:
 };
 
 }  // namespace nuedcs::hardware
-
-REGISTER_COMPONENT(nuedcs::hardware, Car)

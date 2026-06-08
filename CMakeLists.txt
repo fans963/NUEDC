@@ -96,6 +96,7 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 add_executable(main
     src/main.cpp
+    src/component_registry.cpp
     ${FBS_GENERATED_HEADERS}
 )
 
@@ -121,14 +122,14 @@ if(LIBUSB_FOUND)
     target_compile_definitions(main PRIVATE NUEDC_HAS_LIBUSB=1)
 endif()
 
-# RPATH: 二本体在 bin/，库在 lib/，用相对路径找
-set_target_properties(main PROPERTIES
-    BUILD_RPATH "${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/lib"
-    INSTALL_RPATH "$ORIGIN/../lib"
-)
-
 # ====================== install ======================
 include(GNUInstallDirs)
+
+# RPATH: 本体在 bin/，库在 lib(64)/，用相对路径找
+set_target_properties(main PROPERTIES
+    BUILD_RPATH "${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/lib"
+    INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}"
+)
 
 install(TARGETS main RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/config DESTINATION .)
@@ -155,17 +156,17 @@ if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
         COMMAND ${CMAKE_CXX_COMPILER} -print-file-name=libgcc_s.so.1
         OUTPUT_VARIABLE _libgcc OUTPUT_STRIP_TRAILING_WHITESPACE)
 
-    set(_runtime_libs
-        # glibc core
-        "ld-linux-aarch64.so.1"
-        "libc.so.6"
-        "libm.so.6"
-        "libpthread.so.0"
-        "libdl.so.2"
-        "librt.so.1"
-        "libresolv.so.2"
-        "libnss_files.so.2"
-    )
+    # 用交叉编译器的搜索路径找到 glibc 库的实际位置
+    set(_runtime_libs "")
+    foreach(_lib ld-linux-aarch64.so.1 libc.so.6 libm.so.6 libpthread.so.0
+                 libdl.so.2 librt.so.1 libresolv.so.2 libnss_files.so.2)
+        execute_process(
+            COMMAND ${CMAKE_CXX_COMPILER} -print-file-name=${_lib}
+            OUTPUT_VARIABLE _found OUTPUT_STRIP_TRAILING_WHITESPACE)
+        if(EXISTS "${_found}")
+            list(APPEND _runtime_libs "${_found}")
+        endif()
+    endforeach()
 
     # Add C++ runtime if found
     if(EXISTS "${_libstdcxx}")

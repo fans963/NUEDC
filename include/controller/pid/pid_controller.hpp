@@ -1,7 +1,7 @@
 #pragma once
 
 #include "core/component.hpp"
-#include "core/component_registry.hpp"
+// component_registry.hpp is included transitively via component.hpp
 
 #include "pid_calculator.hpp"
 
@@ -40,5 +40,3 @@ private:
 };
 
 } // namespace nuedcs::controller::pid
-
-REGISTER_COMPONENT(nuedcs::controller::pid, PidController)

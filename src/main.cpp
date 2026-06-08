@@ -2,8 +2,11 @@
 #include "mimalloc-override.h"
 
 // 组件头文件必须在 executor.hpp 之前 include，
-// 这样注册宏的静态初始化器才能在 main 之前执行。
+// 这样 register_namespace_components() 才能通过反射发现它们。
 #include "hardware/car.hpp"
+#include "controller/pid/pid_controller.hpp"
+#include "controller/pid/error_pid_controller.hpp"
+#include "controller/chassis/chassis_controller.hpp"
 
 #include "core/executor.hpp"
 
@@ -15,12 +18,26 @@
 #include <sstream>
 #include <string>
 
+// ── C++26 reflection: auto-discover and register all components ───────
+// Enumerates every class in the listed namespaces via std::meta::members_of(),
+// checks if it inherits from register_component, and registers it automatically.
+// No macro, no per-component boilerplate — just list the namespaces.
+
+void register_all_components() {
+    nuedcs::core::register_namespace_components<^^nuedcs::hardware>();
+    nuedcs::core::register_namespace_components<^^nuedcs::controller::pid>();
+    nuedcs::core::register_namespace_components<^^nuedcs::controller::chassis>();
+}
+
 int main()
 {
     spdlog::set_pattern("[%H:%M:%S.%e] [%^%l%$] [%n] %v");
     auto sys_logger = std::make_shared<spdlog::logger>("system", spdlog::default_logger()->sinks().begin(),
         spdlog::default_logger()->sinks().end());
     spdlog::set_default_logger(sys_logger);
+
+    // 注册所有组件（C++26 反射自动发现）
+    register_all_components();
 
     // 加载配置
     auto exe_dir = std::filesystem::canonical("/proc/self/exe").parent_path();

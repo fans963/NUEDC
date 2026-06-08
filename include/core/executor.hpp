@@ -1,6 +1,6 @@
 #pragma once
 
-#include "component_registry.hpp"
+#include "component.hpp"
 
 #include <spdlog/spdlog.h>
 

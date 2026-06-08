@@ -15,6 +15,9 @@
 #include <ryml/ryml_std.hpp>
 #include <spdlog/spdlog.h>
 
+#include <meta>  // C++26 reflection (P2996) — requires -freflection
+#include "component_registry.hpp"
+
 namespace nuedcs::core {
 
 class Executor;
@@ -260,23 +263,42 @@ private:
     std::unordered_set<Component*> wanted_by_;
 };
 
-#define REGISTER_COMPONENT(Namespace, Class)                                                       \
-    static_assert(std::is_base_of_v<::nuedcs::core::Component, Namespace::Class>,                  \
-        #Class " must inherit from Component");                                                    \
-    static_assert(std::is_class_v<Namespace::Class> && !std::is_abstract_v<Namespace::Class>,      \
-        #Class " must be a concrete class");                                                       \
-    namespace {                                                                                    \
-        struct _Registrar_##Class {                                                                \
-            _Registrar_##Class() {                                                                 \
-                ::nuedcs::core::ComponentRegistry::instance().add(                                 \
-                    #Class, [](const char* inst, ryml::NodeRef config)                             \
-                        -> std::unique_ptr<::nuedcs::core::Component> {                            \
-                        ::nuedcs::core::tl_component_name = inst;                                  \
-                        return std::make_unique<Namespace::Class>(config);                         \
-                    });                                                                            \
-            }                                                                                      \
-        };                                                                                         \
-        [[maybe_unused]] static _Registrar_##Class _registrar_inst_##Class;                        \
+// ── C++26 reflection-based component registration ─────────────────────
+//
+// No macro needed. To register a component:
+//   1. Inherit from both Component and register_component
+//   2. In main.cpp, call register_namespace_components<^^ns>() for each
+//      namespace — it auto-discovers all classes via std::meta::members_of().
+
+/// Register a single component type. Class name extracted from AST.
+template <typename T>
+    requires(std::is_base_of_v<Component, T> && std::is_class_v<T> && !std::is_abstract_v<T>)
+inline void register_component_type() {
+    constexpr auto name = std::define_static_string(std::meta::display_string_of(^^T));
+    ComponentRegistry::instance().add(
+        name, [](const char* inst, ryml::NodeRef config) -> std::unique_ptr<Component> {
+            tl_component_name = inst;
+            return std::make_unique<T>(config);
+        });
+}
+
+/// Enumerate all classes in a namespace via std::meta::members_of(),
+/// and auto-register those that inherit from Component.
+/// Requires all component headers for that namespace to be included beforehand.
+template <auto NS>
+    requires(std::meta::is_namespace(NS))
+inline void register_namespace_components() {
+    constexpr auto ctx = std::meta::access_context::unchecked();
+    template for (constexpr auto m : std::define_static_array(std::meta::members_of(NS, ctx))) {
+        if constexpr (std::meta::is_type(m)
+                      && std::meta::is_class_type(m)
+                      && !std::meta::is_abstract_type(m)) {
+            using T = [:m:];
+            if constexpr (std::is_base_of_v<Component, T>) {
+                register_component_type<T>();
+            }
+        }
     }
+}
 
 } // namespace nuedcs::core

@@ -58,6 +58,11 @@ sequenceDiagram
 
 ## 快速开始
 
+### 环境要求
+
+- **GCC 16+**（C++26 + `-freflection`）
+- CMake 3.22+, Ninja, vcpkg
+
 ### 预设一览
 
 | Preset | 编译器 | 链接 | 用途 |
@@ -78,15 +83,20 @@ cmake --preset native && cmake --build build
 cmake --install build --prefix ./build/install && ./build/install/bin/main
 ```
 
-### 交叉编译 aarch64
+### 交叉编译 aarch64（Nix）
+
+项目提供 `flake.nix`，自动配置 aarch64 GCC 16 交叉编译环境：
 
 ```bash
+nix develop                          # 进入交叉编译 shell
 cmake --preset aarch64 && cmake --build build
 cmake --install build --prefix ./build/install
 
 scp -r build/install/* board:/opt/nuedc/
 ssh board /opt/nuedc/bin/main
 ```
+
+Nix shell 提供：GCC 16 交叉编译器、CMake、Ninja、flatc、libusb。C++ 库由 vcpkg 管理。
 
 ## 项目结构
 
@@ -95,10 +105,10 @@ NUEDC/
 ├── include/
 │   ├── core/
 │   │   ├── component.hpp              # Component 基类 + Input/OutputInterface + Config
-│   │   ├── component_registry.hpp     # 自动注册工厂
+│   │   ├── component_registry.hpp     # 反射驱动的自动注册工厂
 │   │   └── executor.hpp               # 拓扑排序 + spin-loop
 │   ├── controller/
-│   │   ├── pid/                       # PID 
+│   │   ├── pid/                       # PID
 │   │   └── chassis/                   # 二轮差速解算
 │   ├── devices/
 │   │   ├── encoder_motor.hpp          # 固件端电机
@@ -119,6 +129,7 @@ NUEDC/
 │   └── config.yaml
 ├── toolchains/                        # GCC / Clang 工具链
 ├── triplets/                          # vcpkg 三元组 (GCC/Clang, 动静)
+├── flake.nix                          # Nix 交叉编译环境
 ├── CMakePresets.json
 ├── CMakeLists.txt
 └── vcpkg.json
@@ -126,10 +137,16 @@ NUEDC/
 
 ## 组件系统
 
+基于 C++26 反射（P2996）的自动注册。**无需宏**，只需继承 `Component` 并在 `main.cpp` 的 `register_all_components()` 中枚举命名空间。
+
 ### 写一个组件
 
 ```cpp
-#include "core/component_registry.hpp"
+// include/my_namespace/my_component.hpp
+#pragma once
+#include "core/component.hpp"
+
+namespace nuedcs::my_namespace {
 
 class MyComponent : public core::Component {
 public:
@@ -143,8 +160,28 @@ private:
     OutputInterface<double> out_;
     double threshold_;
 };
-REGISTER_COMPONENT(nuedcs::components, MyComponent);
+
+}  // namespace nuedcs::my_namespace
 ```
+
+### 注册组件
+
+在 `main.cpp` 中添加一行命名空间枚举：
+
+```cpp
+#include "my_namespace/my_component.hpp"
+
+void register_all_components() {
+    // ... 已有命名空间 ...
+    nuedcs::core::register_namespace_components<^^nuedcs::my_namespace>();
+}
+```
+
+反射自动完成：
+1. `std::meta::members_of(^^ns)` 枚举命名空间所有成员
+2. `std::meta::is_class_type` + `!is_abstract_type` 过滤具体类
+3. `std::is_base_of_v<Component, T>` 确认继承关系
+4. `std::meta::identifier_of(^^T)` 编译期提取类名作为注册键
 
 ### 配置访问
 
@@ -170,7 +207,6 @@ private:
     };
     CarCommand* command_;
 };
-REGISTER_COMPONENT(nuedcs::hardware, Car);
 ```
 
 ## 设备驱动
