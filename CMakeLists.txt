@@ -33,16 +33,9 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release")
     add_compile_options(-O3 -fno-semantic-interposition)
     add_link_options(-s)
 
-    # LTO: whole-program optimization
-    include(CheckIPOSupported)
-    check_ipo_supported(RESULT ipo_supported)
-    if(ipo_supported)
-        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
-        # GCC: single partition for maximum cross-TU inlining
-        # Clang: -flto (full) already does this; -flto=thin is per-triplet
-        if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-            add_link_options(-flto-partition=one)
-        endif()
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        add_link_options(-flto-partition=one)
     endif()
 
     add_compile_options(-ffunction-sections -fdata-sections)

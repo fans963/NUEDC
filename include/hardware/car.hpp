@@ -48,7 +48,7 @@ using namespace devices;
 /// RMCS-style two-phase update:
 ///   update()         — pump USB RX → store to devices → update device statuses
 ///   command_update() — read control inputs → send commands via USB
-class Car : public core::Component {
+class Car final : public core::Component {
     static constexpr uint8_t  MOTOR_LEFT  = 0;
     static constexpr uint8_t  MOTOR_RIGHT = 1;
     static constexpr uint32_t CAN_ID_LEFT  = 0x201;
@@ -152,7 +152,7 @@ public:
 private:
     // ── Partner: command phase ───────────────────────────────────────
 
-    class CarCommand : public core::Component {
+    class CarCommand final : public core::Component {
     public:
         explicit CarCommand(Car& car)
             : car_(car) {

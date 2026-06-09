@@ -22,7 +22,7 @@ namespace nuedcs::controller::chassis {
 ///   wheel_radius  — wheel radius (m), default 0.05
 ///   linear_max    — maximum linear speed (m/s), default 3.0
 ///   angular_max   — maximum angular speed (rad/s), default 8.0
-class ChassisController : public core::Component {
+class ChassisController final : public core::Component {
     static constexpr float kInf = std::numeric_limits<float>::infinity();
     static constexpr float kNan = std::numeric_limits<float>::quiet_NaN();
 

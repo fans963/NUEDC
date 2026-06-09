@@ -6,7 +6,7 @@
 
 namespace nuedcs::controller::pid {
 
-class ErrorPidController : public core::Component {
+class ErrorPidController final : public core::Component {
 public:
     ErrorPidController(ryml::NodeRef config)
         : pid_calculator_([&] {

@@ -7,7 +7,7 @@
 
 namespace nuedcs::controller::pid {
 
-class PidController : public core::Component {
+class PidController final : public core::Component {
 public:
     PidController(ryml::NodeRef config)
         : pid_calculator_([&] {
