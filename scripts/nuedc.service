@@ -1,0 +1,16 @@
+[Unit]
+Description=NUEDC Application
+After=network.target
+
+[Service]
+Type=simple
+User=radxa
+WorkingDirectory=/home/radxa/workspace/nuedc/bin
+ExecStart=/home/radxa/workspace/nuedc/bin/run.sh
+Restart=on-failure
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

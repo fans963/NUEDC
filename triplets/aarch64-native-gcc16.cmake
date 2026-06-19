@@ -5,14 +5,10 @@ set(VCPKG_CMAKE_SYSTEM_NAME Linux)
 
 set(VCPKG_CHAINLOAD_TOOLCHAIN_FILE "${CMAKE_CURRENT_LIST_DIR}/../toolchains/aarch64-gcc16.toolchain.cmake")
 
-set(VCPKG_C_FLAGS "-O3 -flto -march=armv8-a -mtune=cortex-a72 -ffunction-sections -fdata-sections")
-set(VCPKG_CXX_FLAGS "-O3 -flto -march=armv8-a -mtune=cortex-a72 -ffunction-sections -fdata-sections")
+# 全志 A733: 2x Cortex-A76 + 6x Cortex-A55 (ARMv8.2-A)
+set(VCPKG_C_FLAGS "-O3 -flto -march=armv8.2-a+crypto+fp16+dotprod+rdma+lse+rcpc -mtune=cortex-a76 -ffunction-sections -fdata-sections")
+set(VCPKG_CXX_FLAGS "-O3 -flto -march=armv8.2-a+crypto+fp16+dotprod+rdma+lse+rcpc -mtune=cortex-a76 -ffunction-sections -fdata-sections")
 set(VCPKG_LINKER_FLAGS "-flto -Wl,--gc-sections")
-
-# sysroot: 由主项目通过环境变量 NUEDC_USE_SYSROOT=ON 启用
-set(VCPKG_CMAKE_CONFIGURE_OPTIONS
-    "-DMI_NO_OPT_ARCH=ON"  # mimalloc: disable armv8.1-a LSE, stick to armv8-a
-)
 
 if("$ENV{NUEDC_USE_SYSROOT}" STREQUAL "ON")
     list(APPEND VCPKG_CMAKE_CONFIGURE_OPTIONS

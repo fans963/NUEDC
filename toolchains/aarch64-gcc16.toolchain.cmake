@@ -15,7 +15,14 @@ endif()
 set(CMAKE_C_COMPILER ${_CROSS_GCC})
 set(CMAKE_CXX_COMPILER ${_CROSS_GXX})
 
-add_compile_options(-march=armv8-a -mtune=cortex-a72 -std=gnu++26 -freflection)
+# 全志 A733: 2x Cortex-A76 r4p1 + 6x Cortex-A55 r2p0 (DynamIQ big.LITTLE)
+# ISA 扩展 (A76 和 A55 的交集, 验证: cat /proc/cpuinfo | grep Features):
+#   fp asimd aes pmull sha1 sha2 crc32 atomics fphp asimdhp asimdrdm asimddp lrcpc dcpop
+add_compile_options(
+    -march=armv8.2-a+crypto+fp16+dotprod+rdma+lse+rcpc
+    -mtune=cortex-a76
+    -std=gnu++26 -freflection
+)
 
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)

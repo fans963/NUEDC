@@ -11,13 +11,12 @@ class PidController final : public core::Component {
 public:
     PidController(ryml::NodeRef config)
         : pid_calculator_([&] {
-              auto c = core::Config{config};
-              return PidCalculator(
-                  c["kp"].get(nan), c["ki"].get(nan), c["kd"].get(nan),
-                  c["output_min"].get(-inf), c["output_max"].get(inf),
-                  c["integral_min"].get(-inf), c["integral_max"].get(inf));
-          }()) {
-        auto c = core::Config{config};
+            auto c = core::Config { config };
+            return PidCalculator(c["kp"].get(nan), c["ki"].get(nan), c["kd"].get(nan),
+                c["output_min"].get(-inf), c["output_max"].get(inf), c["integral_min"].get(-inf),
+                c["integral_max"].get(inf));
+        }()) {
+        auto c = core::Config { config };
         register_input(c["measurement"].str(), measurement_);
         register_input(c["setpoint"].str(), setpoint_);
         register_output(c["control"].str(), control_);

@@ -1,18 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(dirname "$0")/env.sh"
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-CACHE_FILE="$PROJECT_DIR/.cache/board-host"
-SERVICE_NAME="nuedc"
+require_board_host
 
-if [[ ! -f "$CACHE_FILE" ]]; then
-    echo "未找到设备缓存，请先运行: ./scripts/search-device.sh" >&2
-    exit 1
-fi
-
-BOARD_HOST="$(cat "$CACHE_FILE")"
-
-echo "重启 $BOARD_HOST 上的 $SERVICE_NAME ..."
-ssh "$BOARD_HOST" "sudo systemctl restart $SERVICE_NAME"
-echo "已重启 $SERVICE_NAME"
+info "重启 $BOARD_SSH 上的 $SERVICE_NAME ..."
+ssh -tt "$BOARD_SSH" "sudo systemctl restart $SERVICE_NAME"
+info "已重启 $SERVICE_NAME"
