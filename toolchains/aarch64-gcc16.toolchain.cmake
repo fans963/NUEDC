@@ -15,6 +15,12 @@ endif()
 set(CMAKE_C_COMPILER ${_CROSS_GCC})
 set(CMAKE_CXX_COMPILER ${_CROSS_GXX})
 
+find_program(_CROSS_STRIP
+    NAMES aarch64-unknown-linux-gnu-strip aarch64-linux-gnu-strip)
+if(_CROSS_STRIP)
+    set(CMAKE_STRIP ${_CROSS_STRIP})
+endif()
+
 # 全志 A733: 2x Cortex-A76 r4p1 + 6x Cortex-A55 r2p0 (DynamIQ big.LITTLE)
 # ISA 扩展 (A76 和 A55 的交集, 验证: cat /proc/cpuinfo | grep Features):
 #   fp asimd aes pmull sha1 sha2 crc32 atomics fphp asimdhp asimdrdm asimddp lrcpc dcpop

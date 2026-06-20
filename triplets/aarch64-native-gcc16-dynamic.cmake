@@ -13,9 +13,9 @@ set(VCPKG_MAKE_BUILD_TRIPLET aarch64-unknown-linux-gnu)
 set(VCPKG_ENV_PASSTHROUGH CC CXX)
 
 # 全志 A733: 2x Cortex-A76 + 6x Cortex-A55 (ARMv8.2-A)
-set(VCPKG_C_FLAGS "-O3 -flto -march=armv8.2-a+crypto+fp16+dotprod+rdma+lse+rcpc -mtune=cortex-a76 -ffunction-sections -fdata-sections")
-set(VCPKG_CXX_FLAGS "-O3 -flto -march=armv8.2-a+crypto+fp16+dotprod+rdma+lse+rcpc -mtune=cortex-a76 -ffunction-sections -fdata-sections")
-set(VCPKG_LINKER_FLAGS "-flto -Wl,--gc-sections")
+set(VCPKG_C_FLAGS "-O3 -flto -march=armv8.2-a+crypto+fp16+dotprod+rdma+lse+rcpc -mtune=cortex-a76")
+set(VCPKG_CXX_FLAGS "-O3 -flto -march=armv8.2-a+crypto+fp16+dotprod+rdma+lse+rcpc -mtune=cortex-a76")
+set(VCPKG_LINKER_FLAGS "-flto")
 
 if("$ENV{NUEDC_USE_SYSROOT}" STREQUAL "ON")
     list(APPEND VCPKG_CMAKE_CONFIGURE_OPTIONS

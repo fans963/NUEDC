@@ -1,16 +1,15 @@
-# Debian Bullseye ARM64 Sysroot
+# Debian trixie ARM64 Sysroot
 # 用法:
 #   docker buildx build --platform linux/arm64 -f Dockerfile.sysroot -t nuedc-sysroot .
 #   docker create --name sysroot-tmp nuedc-sysroot
 #   docker cp sysroot-tmp:/ sysroot/
 #   docker rm sysroot-tmp
 
-FROM --platform=linux/arm64 debian:bullseye
+FROM --platform=linux/arm64 debian:trixie
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libeigen3-dev \
-    libfreetype-dev \
     libopencv-dev \
     && apt-get clean && rm -rf /var/lib/apt/lists/*

@@ -1,0 +1,65 @@
+{
+  "name": "opencv5",
+  "version": "5.0.0",
+  "description": "Open Source Computer Vision Library (OpenCV 5)",
+  "homepage": "https://opencv.org/",
+  "dependencies": [
+    "vcpkg-cmake",
+    "vcpkg-cmake-config"
+  ],
+  "default-features": [
+    "thread",
+    "intrinsics",
+    "eigen",
+    "imgproc",
+    "imgcodecs"
+  ],
+  "features": {
+    "eigen": {
+      "description": "Eigen support for opencv",
+      "dependencies": ["eigen3"]
+    },
+    "thread": {
+      "description": "Enable thread support"
+    },
+    "intrinsics": {
+      "description": "enable intrinsics"
+    },
+    "calib3d": {
+      "description": "calib3d module"
+    },
+    "dnn": {
+      "description": "Enable dnn module"
+    },
+    "highgui": {
+      "description": "highgui module"
+    },
+    "imgcodecs": {
+      "description": "imgcodecs module"
+    },
+    "imgproc": {
+      "description": "imgproc module"
+    },
+    "jpeg": {
+      "description": "JPEG support for opencv"
+    },
+    "png": {
+      "description": "PNG support for opencv"
+    },
+    "contrib": {
+      "description": "opencv_contrib module"
+    },
+    "ffmpeg": {
+      "description": "ffmpeg support for opencv"
+    },
+    "opencl": {
+      "description": "Enable OpenCL support"
+    },
+    "videoio": {
+      "description": "videoio module (camera/video capture)"
+    },
+    "world": {
+      "description": "Compile to a single package support for opencv"
+    }
+  }
+}

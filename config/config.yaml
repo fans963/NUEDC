@@ -1,5 +1,14 @@
 components:
-  - nuedcs::hardware::Car -> car0
+  - nuedcs::vision::VisionTest -> vision
+  
+vision:
+  device: 0
+  width: 640
+  height: 480
+  canny_low: 50
+  canny_high: 150
+  blur_ksize: 5
+  save_path: ""  # 设路径如 "/tmp/edges.png" 可保存边缘图
 
 car0:
   pid: 0x00b9

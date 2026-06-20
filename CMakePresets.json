@@ -49,51 +49,6 @@
             }
         },
         {
-            "name": "clang",
-            "displayName": "Native Clang (x86_64, dynamic)",
-            "description": "Clang 22 — dynamic linking for fast dev iteration",
-            "generator": "Ninja",
-            "binaryDir": "${sourceDir}/build",
-            "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Release",
-                "NUEDC_STATIC_LINKING": "OFF",
-                "VCPKG_TARGET_TRIPLET": "native-clang-dynamic",
-                "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/triplets",
-                "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
-                "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/toolchains/native-clang.toolchain.cmake"
-            }
-        },
-        {
-            "name": "clang-static",
-            "displayName": "Native Clang (x86_64, static, full LTO)",
-            "description": "Clang 22 — static single binary, maximum optimization",
-            "generator": "Ninja",
-            "binaryDir": "${sourceDir}/build",
-            "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Release",
-                "NUEDC_STATIC_LINKING": "ON",
-                "VCPKG_TARGET_TRIPLET": "native-clang-static",
-                "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/triplets",
-                "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
-                "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/toolchains/native-clang.toolchain.cmake"
-            }
-        },
-        {
-            "name": "clang-debug",
-            "displayName": "Native Clang (x86_64, debug)",
-            "description": "Clang 22 — dynamic, -O0 -g, ASan-compatible",
-            "generator": "Ninja",
-            "binaryDir": "${sourceDir}/build",
-            "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug",
-                "NUEDC_STATIC_LINKING": "OFF",
-                "VCPKG_TARGET_TRIPLET": "native-clang-dynamic",
-                "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/triplets",
-                "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
-                "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/toolchains/native-clang.toolchain.cmake"
-            }
-        },
-        {
             "name": "aarch64",
             "displayName": "AArch64 (dynamic, Cortex-A76)",
             "description": "Cross-compile for aarch64 with dynamic linking + bundled .so",
@@ -110,12 +65,27 @@
         },
         {
             "name": "aarch64-static",
-            "displayName": "AArch64 (static, Cortex-A72)",
+            "displayName": "AArch64 (static, Cortex-A76)",
             "description": "Cross-compile for aarch64 — static, single binary + glibc bundle",
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
+                "NUEDC_STATIC_LINKING": "ON",
+                "VCPKG_TARGET_TRIPLET": "aarch64-native-gcc16",
+                "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/triplets",
+                "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+                "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/toolchains/aarch64-gcc16.toolchain.cmake"
+            }
+        },
+        {
+            "name": "aarch64-debug",
+            "displayName": "AArch64 (debug, Cortex-A76)",
+            "description": "Cross-compile for aarch64 — debug, project code -O0 -g, deps stay release",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
                 "NUEDC_STATIC_LINKING": "ON",
                 "VCPKG_TARGET_TRIPLET": "aarch64-native-gcc16",
                 "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/triplets",
@@ -138,24 +108,16 @@
             "configurePreset": "native-debug"
         },
         {
-            "name": "clang",
-            "configurePreset": "clang"
-        },
-        {
-            "name": "clang-static",
-            "configurePreset": "clang-static"
-        },
-        {
-            "name": "clang-debug",
-            "configurePreset": "clang-debug"
-        },
-        {
             "name": "aarch64",
             "configurePreset": "aarch64"
         },
         {
             "name": "aarch64-static",
             "configurePreset": "aarch64-static"
+        },
+        {
+            "name": "aarch64-debug",
+            "configurePreset": "aarch64-debug"
         }
     ]
 }

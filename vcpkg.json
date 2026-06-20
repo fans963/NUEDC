@@ -14,12 +14,15 @@
       "default-features": false
     },
     {
-      "name": "opencv4",
+      "name": "opencv5",
       "default-features": false,
       "features": [
         "thread",
         "intrinsics",
-        "eigen"
+        "eigen",
+        "imgproc",
+        "imgcodecs",
+        "videoio"
       ]
     }
   ]
