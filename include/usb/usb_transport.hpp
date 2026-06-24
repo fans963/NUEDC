@@ -43,7 +43,7 @@ namespace nuedc::transport {
 ///   t.send(buf, len);            // non-blocking, any thread
 ///   t.stop();
 class UsbTransport {
-    static constexpr int INTERFACE  = 1;
+    static constexpr int INTERFACE  = 0;
     static constexpr uint8_t EP_OUT = 0x01;
     static constexpr uint8_t EP_IN  = 0x81;
     static constexpr size_t RX_BUF  = 512;
@@ -63,11 +63,13 @@ public:
             return;  // graceful: connected_ stays false, start()/send() are no-ops
         }
 
-        libusb_set_auto_detach_kernel_driver(handle_, 1);
+        if (libusb_kernel_driver_active(handle_, INTERFACE) == 1)
+            libusb_detach_kernel_driver(handle_, INTERFACE);
+
         ret = libusb_claim_interface(handle_, INTERFACE);
         if (ret) {
             cleanup();
-            throw std::runtime_error("claim_interface");
+            throw std::runtime_error("claim_interface: " + std::string(libusb_error_name(ret)));
         }
 
         rx_xfer_ = libusb_alloc_transfer(0);
@@ -94,6 +96,9 @@ public:
     /// Set callback invoked with raw received bytes (on bg thread).
     /// Must be called before start().
     void set_on_receive(std::function<void(const uint8_t*, size_t)> cb) { on_rx_ = std::move(cb); }
+
+    /// Set callback invoked once when device disconnects (on bg thread).
+    void set_on_disconnect(std::function<void()> cb) { on_disconnect_ = std::move(cb); }
 
     [[nodiscard]] bool connected() const { return connected_; }
 
@@ -141,7 +146,11 @@ private:
     void event_loop() {
         while (running_.load(std::memory_order_relaxed)) {
             timeval tv { 0, 1000 }; // 1ms timeout for TX polling
-            libusb_handle_events_timeout(ctx_, &tv);
+            int ret = libusb_handle_events_timeout(ctx_, &tv);
+            if (ret == LIBUSB_ERROR_NO_DEVICE) {
+                mark_disconnected();
+                break;
+            }
             drain_tx();
         }
     }
@@ -154,7 +163,7 @@ private:
     };
 
     void drain_tx() {
-        if (tx_in_flight_.load(std::memory_order_relaxed)) return;
+        if (!connected_ || tx_in_flight_.load(std::memory_order_relaxed)) return;
         TxFrame f;
         if (!tx_ring_.pop(f)) return;
 
@@ -164,12 +173,18 @@ private:
 
         if (int ret = libusb_submit_transfer(tx_xfer_); ret) {
             tx_in_flight_.store(false, std::memory_order_relaxed);
+            if (ret == LIBUSB_ERROR_NO_DEVICE) mark_disconnected();
         }
     }
 
     static void tx_done(libusb_transfer* xfer) {
         auto* self = static_cast<UsbTransport*>(xfer->user_data);
         self->tx_in_flight_.store(false, std::memory_order_relaxed);
+        if (xfer->status == LIBUSB_TRANSFER_NO_DEVICE
+            || xfer->status == LIBUSB_TRANSFER_ERROR) {
+            self->mark_disconnected();
+            return;
+        }
         self->drain_tx(); // chain: submit next pending frame
     }
 
@@ -177,10 +192,26 @@ private:
 
     static void rx_done(libusb_transfer* xfer) {
         auto* self = static_cast<UsbTransport*>(xfer->user_data);
+
+        if (xfer->status == LIBUSB_TRANSFER_NO_DEVICE
+            || xfer->status == LIBUSB_TRANSFER_ERROR) {
+            self->mark_disconnected();
+            return;
+        }
+
         if (xfer->status == LIBUSB_TRANSFER_COMPLETED && xfer->actual_length > 0 && self->on_rx_)
             self->on_rx_(xfer->buffer, xfer->actual_length);
 
         if (self->running_.load(std::memory_order_relaxed)) libusb_submit_transfer(xfer);
+    }
+
+    // ── Disconnect detection ────────────────────────────────────────────
+
+    void mark_disconnected() {
+        if (!connected_) return;
+        connected_ = false;
+        spdlog::error("[UsbTransport] device disconnected");
+        if (on_disconnect_) on_disconnect_();
     }
 
     // ── Resource cleanup ───────────────────────────────────────────────
@@ -222,6 +253,7 @@ private:
     std::thread thread_;
 
     std::function<void(const uint8_t*, size_t)> on_rx_;
+    std::function<void()> on_disconnect_;
 };
 
 // ── Framing adapter: wraps any write-capable transport with wire framing ──

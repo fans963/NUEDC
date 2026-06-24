@@ -36,7 +36,7 @@ namespace nuedc {
 /// Handler may be incomplete at member declaration point (e.g. Car inside Car).
 template <typename Handler>
 class NuedcSlave {
-    static constexpr size_t RX_RING_SIZE = 32;
+    static constexpr size_t RX_RING_SIZE = 256;
 
     struct RxFrame {
         uint8_t data[4 + protocol::MAX_FRAME_LEN];

@@ -1,5 +1,7 @@
 components:
   - nuedcs::vision::VisionTest -> vision
+  - nuedcs::hardware::Car -> car
+  - nuedcs::test::MotorTest -> motor_test
   
 vision:
   device: 0
@@ -10,6 +12,6 @@ vision:
   blur_ksize: 5
   save_path: ""  # 设路径如 "/tmp/edges.png" 可保存边缘图
 
-car0:
-  pid: 0x00b9
-  vid: 0x3277
+car:
+  pid: 0x0963
+  vid: 0x1209

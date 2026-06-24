@@ -176,6 +176,9 @@ public:
             for (auto& c : components_) c->update();
     }
 
+    /// Components can call this to request a graceful shutdown.
+    static void request_quit() { quit_.store(true, std::memory_order::relaxed); }
+
     [[nodiscard]] const std::vector<std::unique_ptr<Component>>& components() const { return components_; }
 
 private:

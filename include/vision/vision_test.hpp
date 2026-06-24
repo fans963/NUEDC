@@ -7,9 +7,15 @@
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
 
+#include <atomic>
+#include <mutex>
+#include <thread>
+
 namespace nuedcs::vision {
 
 /// Vision test component — camera capture + Canny edge detection.
+///
+/// Capture runs on a background thread to avoid blocking the main loop.
 ///
 /// Outputs:
 ///   /vision/frame_width   — captured frame width (int)
@@ -27,7 +33,7 @@ namespace nuedcs::vision {
 class VisionTest final : public core::Component {
 public:
     explicit VisionTest(ryml::NodeRef config) {
-        auto c = core::Config { config };
+        auto c = core::Config{config};
 
         device_     = c["device"].get(0);
         width_      = c["width"].get(640);
@@ -42,7 +48,11 @@ public:
         register_output("/vision/edge_count", out_edges_, 0);
     }
 
-    ~VisionTest() override { cap_.release(); }
+    ~VisionTest() override {
+        running_.store(false, std::memory_order_relaxed);
+        if (thread_.joinable()) thread_.join();
+        cap_.release();
+    }
 
     bool init() override {
         cap_.open(device_);
@@ -54,34 +64,49 @@ public:
         cap_.set(cv::CAP_PROP_FRAME_HEIGHT, height_);
 
         info("Camera opened: {}x{} on device {}", width_, height_, device_);
+
+        // 启动后台采集线程
+        running_.store(true, std::memory_order_relaxed);
+        thread_ = std::thread(&VisionTest::capture_loop, this);
         return true;
     }
 
     void update() override {
-        cv::Mat frame;
-        if (!cap_.read(frame) || frame.empty()) {
-            warn("Failed to read frame");
-            return;
-        }
-
-        *out_width_  = frame.cols;
-        *out_height_ = frame.rows;
-
-        // Grayscale → blur → Canny
-        cv::Mat gray, blurred, edges;
-        cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
-        cv::GaussianBlur(gray, blurred, cv::Size(blur_ksize_, blur_ksize_), 0);
-        cv::Canny(blurred, edges, canny_low_, canny_high_);
-
-        *out_edges_ = cv::countNonZero(edges);
-
-        // Optionally save edge image
-        if (!save_path_.empty()) {
-            cv::imwrite(save_path_, edges);
-        }
+        // 非阻塞：读取后台线程的最新结果
+        std::lock_guard lk(mtx_);
+        *out_width_  = latest_width_;
+        *out_height_ = latest_height_;
+        *out_edges_  = latest_edges_;
     }
 
 private:
+    void capture_loop() {
+        while (running_.load(std::memory_order_relaxed)) {
+            cv::Mat frame;
+            if (!cap_.read(frame) || frame.empty()) {
+                warn("Failed to read frame");
+                continue;
+            }
+
+            cv::Mat gray, blurred, edges;
+            cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
+            cv::GaussianBlur(gray, blurred, cv::Size(blur_ksize_, blur_ksize_), 0);
+            cv::Canny(blurred, edges, canny_low_, canny_high_);
+
+            int w = frame.cols, h = frame.rows, e = cv::countNonZero(edges);
+
+            if (!save_path_.empty())
+                cv::imwrite(save_path_, edges);
+
+            {
+                std::lock_guard lk(mtx_);
+                latest_width_  = w;
+                latest_height_ = h;
+                latest_edges_  = e;
+            }
+        }
+    }
+
     int device_     = 0;
     int width_      = 640;
     int height_     = 480;
@@ -91,6 +116,14 @@ private:
     std::string save_path_;
 
     cv::VideoCapture cap_;
+
+    // 后台线程
+    std::thread thread_;
+    std::atomic<bool> running_{false};
+    std::mutex mtx_;
+    int latest_width_  = 0;
+    int latest_height_ = 0;
+    int latest_edges_  = 0;
 
     OutputInterface<int> out_width_;
     OutputInterface<int> out_height_;

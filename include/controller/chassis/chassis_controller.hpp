@@ -28,7 +28,7 @@ class ChassisController final : public core::Component {
 
 public:
     explicit ChassisController(ryml::NodeRef config) {
-        auto c = core::Config{config};
+        auto c = core::Config { config };
 
         wheel_base_   = c["wheel_base"].get(0.20);
         wheel_radius_ = c["wheel_radius"].get(0.05);
@@ -36,27 +36,27 @@ public:
         angular_max_  = c["angular_max"].get(8.0);
 
         // Inputs: desired chassis motion
-        register_input("/chassis/control_linear",  ctrl_linear_);
+        register_input("/chassis/control_linear", ctrl_linear_);
         register_input("/chassis/control_angular", ctrl_angular_);
 
         // Outputs: wheel targets
-        register_output("/chassis/left/target_speed",  left_out_,  0.0);
+        register_output("/chassis/left/target_speed", left_out_, 0.0);
         register_output("/chassis/right/target_speed", right_out_, 0.0);
     }
 
     void update() override {
         // Read control inputs (NaN if not connected → no motion)
-        float linear  = ctrl_linear_.ready()  ? *ctrl_linear_  : 0.0;
+        float linear  = ctrl_linear_.ready() ? *ctrl_linear_ : 0.0;
         float angular = ctrl_angular_.ready() ? *ctrl_angular_ : 0.0;
 
         // Clamp
-        linear  = std::clamp(linear,  -linear_max_,  linear_max_);
+        linear  = std::clamp(linear, -linear_max_, linear_max_);
         angular = std::clamp(angular, -angular_max_, angular_max_);
 
         // Inverse kinematics: body velocity → wheel velocity (rad/s)
         float half_track = wheel_base_ / 2.0;
-        float v_left  = (linear - angular * half_track) / wheel_radius_;
-        float v_right = (linear + angular * half_track) / wheel_radius_;
+        float v_left     = (linear - angular * half_track) / wheel_radius_;
+        float v_right    = (linear + angular * half_track) / wheel_radius_;
 
         *left_out_  = v_left;
         *right_out_ = v_right;
@@ -75,4 +75,4 @@ private:
     OutputInterface<float> right_out_;
 };
 
-}  // namespace nuedcs::controller::chassis
+} // namespace nuedcs::controller::chassis

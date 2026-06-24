@@ -29,8 +29,8 @@ public:
                  const std::string& prefix, uint8_t motor_id)
         : motor_id_(motor_id) {
         status.register_output(prefix + "/velocity", velocity_out_, 0.0f);
-        command.register_input(prefix + "/target_speed", target_speed_in_);
-        command.register_input(prefix + "/encoder_lines_per_rev", lines_per_rev_in_);
+        command.register_input(prefix + "/target_speed", target_speed_in_, false);
+        command.register_input(prefix + "/encoder_lines_per_rev", lines_per_rev_in_, false);
     }
 
     EncoderMotor(core::Component& status, core::Component& command,

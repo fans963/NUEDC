@@ -8,6 +8,7 @@
 #include "controller/pid/error_pid_controller.hpp"
 #include "controller/chassis/chassis_controller.hpp"
 #include "vision/vision_test.hpp"
+#include "test/motor_test.hpp"
 
 #include "core/executor.hpp"
 
@@ -29,6 +30,7 @@ void register_all_components() {
     nuedcs::core::register_namespace_components<^^nuedcs::controller::pid>();
     nuedcs::core::register_namespace_components<^^nuedcs::controller::chassis>();
     nuedcs::core::register_namespace_components<^^nuedcs::vision>();
+    nuedcs::core::register_namespace_components<^^nuedcs::test>();
 }
 
 int main()
