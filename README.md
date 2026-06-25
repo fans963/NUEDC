@@ -1,15 +1,18 @@
 # NUEDC
 
-嵌入式机器人竞赛开发项目。主机端（x86-64 / aarch64）通过 USB Bulk 与下位机（STM32F723 Zephyr）通信，FlatBuffers 协议。
+嵌入式机器人竞赛开发项目。主机端（x86-64 / aarch64）通过 USB Bulk 与下位机通信（FlatBuffers 协议），内置 Foxglove WebSocket 桥接用于实时可视化调试。
 
 ## 架构
 
 ```mermaid
 graph TD
     subgraph Host["NUEDC (x86-64 / aarch64)"]
-        EXEC[Executor: spin loop]
-        CAR[Car]
-        CMD[CarCommand throttled]
+        EXEC[Executor: topological sort + spin loop]
+        VIS[VisionTest: camera + Canny]
+        CAR[Car: chassis kinematics]
+        CMD[CarCommand: throttled control]
+        MTEST[MotorTest: sine-wave test signal]
+        BRIDGE[FoxgloveBridge: WebSocket streaming]
         ENC_L[EncoderMotor x2]
         MOT_L[CanMotor x2]
         IMU[Bmi088 ring-buffered AHRS]
@@ -17,14 +20,25 @@ graph TD
         SLAVE[NuedcSlave]
         USB_T[UsbTransport async libusb]
 
+        EXEC --> VIS
         EXEC --> CAR
+        EXEC --> MTEST
+        EXEC --> CMD
+        EXEC --> BRIDGE
         CAR --> ENC_L
         CAR --> MOT_L
         CAR --> IMU
         CAR --> TF
         CAR --> SLAVE
-        CAR --> CMD
+        MTEST -->|target_speed| CMD
+        VIS -->|image/sensor| BRIDGE
+        CAR -->|velocity/IMU| BRIDGE
         SLAVE --> USB_T
+    end
+
+    subgraph Foxglove["Foxglove Studio"]
+        PLOT[Plot Panel: velocity, IMU]
+        IMG[Image Panel: camera feed]
     end
 
     subgraph Firmware["nuedc_slave (STM32F723)"]
@@ -35,9 +49,7 @@ graph TD
     end
 
     USB_T <-->|USB Bulk FlatBuffers| Firmware
-
-    CMD -->|MotorCommandPack| USB_T
-    USB_T -->|EncoderPack / ImuPack| CAR
+    BRIDGE -->|WebSocket ws://localhost:8765| Foxglove
 ```
 
 ### 数据流
@@ -61,6 +73,7 @@ sequenceDiagram
 ### 环境要求
 
 - **GCC 16+**（C++26 + `-freflection`）
+- **Rust** nightly（foxglove-sdk 编译 Rust C 库）
 - CMake 3.22+, Ninja, vcpkg
 
 ### 预设一览
@@ -98,6 +111,28 @@ ssh board /opt/nuedc/bin/main
 
 Nix shell 提供：GCC 16 交叉编译器、CMake、Ninja、flatc、libusb。C++ 库由 vcpkg 管理。
 
+### Foxglove 实时可视化
+
+内置 `FoxgloveBridge` 组件，通过 WebSocket 将组件输出转发到 [Foxglove Studio](https://foxglove.dev/)：
+
+1. 启动程序后，打开 Foxglove Studio
+2. 选 "Open connection" → "Foxglove WebSocket" → `ws://localhost:8765`
+3. 左侧 channels 面板勾选数据源，拖入 Plot / Image 面板即可实时查看
+
+在 `config/config.yaml` 中配置要转发的通道：
+
+```yaml
+foxglove:
+  host: "0.0.0.0"
+  port: 8765
+  channels:
+    /chassis/velocity: { type: double, hz: 50 }
+    /imu/gyro_x:       { type: double, hz: 100 }
+    /vision/image:     { type: image,  hz: 30 }
+```
+
+支持类型：`float`、`double`、`int`（标量 → Plot 面板）、`image`（cv::Mat → Image 面板）。
+
 ## 项目结构
 
 ```
@@ -106,27 +141,34 @@ NUEDC/
 │   ├── core/
 │   │   ├── component.hpp              # Component 基类 + Input/OutputInterface + Config
 │   │   ├── component_registry.hpp     # 反射驱动的自动注册工厂
-│   │   └── executor.hpp               # 拓扑排序 + spin-loop
+│   │   └── executor.hpp               # Kahn 拓扑排序 + spin-loop
 │   ├── controller/
-│   │   ├── pid/                       # PID
-│   │   └── chassis/                   # 二轮差速解算
+│   │   ├── pid/                       # PID / ErrorPID
+│   │   └── chassis/                   # 二轮差速逆运动学
 │   ├── devices/
-│   │   ├── encoder_motor.hpp          # 固件端电机
-│   │   ├── can_motor.hpp              # CAN 直通电机
-│   │   └── bmi088.hpp                # IMU + Mahony AHRS (ring-buffered)
+│   │   ├── encoder_motor.hpp          # 固件端编码器电机
+│   │   ├── can_motor.hpp              # CAN 直通电机 (DJI M3508 等)
+│   │   └── bmi088.hpp                 # IMU + Mahony AHRS (ring-buffered)
 │   ├── hardware/
-│   │   └── car.hpp                    # 差分底盘
+│   │   └── car.hpp                    # 差分底盘 + USB 断开检测
+│   ├── vision/
+│   │   └── vision_test.hpp            # 摄像头采集 + Canny 边缘检测 (后台线程)
+│   ├── test/
+│   │   └── motor_test.hpp             # 正弦波电机测试组件
 │   ├── usb/
 │   │   ├── protocol.hpp               # 帧协议 0x5A|size(4)|body|0xA5
-│   │   ├── usb_transport.hpp          # 异步 libusb + SPSC ring
-│   │   └── nuedc_slave.hpp            # NuedcSlave<Handler> 协议层
-│   ├── fast_tf/                       # FastTF (GPL-3.0) 编译期 TF 树
-│   └── util/
-│       ├── ring_buffer.hpp            # 无锁 SPSC ring buffer
-│       └── throttle.hpp              # 自限频工具
+│   │   ├── usb_transport.hpp          # 异步 libusb + SPSC ring + 断开检测
+│   │   └── nuedc_slave.hpp            # NuedcSlave<Handler> FlatBuffers 协议层
+│   ├── util/
+│   │   ├── ring_buffer.hpp            # 无锁 SPSC ring buffer
+│   │   ├── throttle.hpp               # 自限频工具
+│   │   └── foxglove_bridge.hpp        # Foxglove WebSocket 桥接 (官方 SDK)
+│   └── fast_tf/                       # FastTF (GPL-3.0) 编译期 TF 树
 ├── schemas/                           # FlatBuffers schema (与固件共享)
 ├── config/
-│   └── config.yaml
+│   └── config.yaml                    # 组件 + Foxglove 通道配置
+├── ports/
+│   └── foxglove-sdk/                  # foxglove-sdk vcpkg port (cargo 自定义编译)
 ├── toolchains/                        # GCC / Clang 工具链
 ├── triplets/                          # vcpkg 三元组 (GCC/Clang, 动静)
 ├── flake.nix                          # Nix 交叉编译环境
