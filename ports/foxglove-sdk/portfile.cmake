@@ -6,15 +6,37 @@ vcpkg_from_github(
     HEAD_REF main
 )
 
-# ── Determine Rust target triple ─────────────────────────────────────
+# ── Rust target & optimization ───────────────────────────────────────
 set(_rust_target "")
-set(_cargo_feats "--no-default-features" "--features=ring")  # ring crypto backend
+set(_cargo_feats "--no-default-features" "--features=ring")
 if(NOT "${VCPKG_TARGET_ARCHITECTURE}" STREQUAL "${VCPKG_HOST_ARCHITECTURE}")
     if(VCPKG_TARGET_ARCHITECTURE STREQUAL "arm64")
         set(_rust_target "aarch64-unknown-linux-gnu")
         set(_prebuilt_dir "${SOURCE_PATH}/cargo-prebuild")
     endif()
 endif()
+
+# ── Cargo config (shared by both paths) ─────────────────────────────
+set(_cargo_cfg "$ENV{HOME}/.cargo/config.toml")
+set(_cargo_saved "")
+if(EXISTS "${_cargo_cfg}")
+    file(READ "${_cargo_cfg}" _cargo_saved)
+endif()
+
+# Profile: max optimization (does NOT conflict with Corrosion)
+file(WRITE "${_cargo_cfg}"
+    "[profile.release]\n"
+    "lto = \"fat\"\n"
+    "codegen-units = 1\n"
+)
+
+function(foxglove_restore_cargo_config)
+    if(_cargo_saved)
+        file(WRITE "${_cargo_cfg}" "${_cargo_saved}")
+    else()
+        file(REMOVE "${_cargo_cfg}")
+    endif()
+endfunction()
 
 # ── Step 1: Build Rust C library ─────────────────────────────────────
 
@@ -25,23 +47,23 @@ if(_rust_target)
         LOGNAME rustup-target
     )
 
-    # Cargo config: per-target linker (not global CC)
-    set(_cargo_cfg "$ENV{HOME}/.cargo/config.toml")
-    # Save existing config content
-    if(EXISTS "${_cargo_cfg}")
-        file(READ "${_cargo_cfg}" _cargo_saved)
-    endif()
-    file(WRITE "${_cargo_cfg}"
-        "[target.${_rust_target}]\nlinker = \"aarch64-linux-gnu-gcc\"\n"
+    # Append target linker to cargo config
+    file(APPEND "${_cargo_cfg}"
+        "\n[target.${_rust_target}]\nlinker = \"aarch64-linux-gnu-gcc\"\n"
     )
 
-    # Unset global CC/CXX so Cargo uses HOST compiler for build scripts
+    # Unset global CC/CXX → Cargo uses host compiler for build scripts
     set(_save_cc  "$ENV{CC}")
     set(_save_cxx "$ENV{CXX}")
     unset(ENV{CC})
     unset(ENV{CXX})
 
+    # RUSTFLAGS for cross-compile (safe: no Corrosion conflict)
+    set(_cross_rustflags "-Clto=fat -Ccodegen-units=1 -Ctarget-cpu=cortex-a76")
+    set(ENV{RUSTFLAGS} "${_cross_rustflags}")
+
     message(STATUS "foxglove-sdk: cargo build --release --target=${_rust_target}")
+    message(STATUS "foxglove-sdk: RUSTFLAGS=${_cross_rustflags}")
     vcpkg_execute_required_process(
         COMMAND cargo build --release --target ${_rust_target}
                              --manifest-path c/Cargo.toml
@@ -49,18 +71,22 @@ if(_rust_target)
         WORKING_DIRECTORY "${SOURCE_PATH}"
         LOGNAME cargo-build
     )
+    unset(ENV{RUSTFLAGS})
 
-    # Restore environment
-    set(ENV{CC}  "${_save_cc}")
-    set(ENV{CXX} "${_save_cxx}")
-    # Restore cargo config
-    if(DEFINED _cargo_saved)
-        file(WRITE "${_cargo_cfg}" "${_cargo_saved}")
-    else()
-        file(REMOVE "${_cargo_cfg}")
+    # Verify target-cpu via ARM ELF attributes
+    execute_process(
+        COMMAND readelf -A "${_cargo_out}/libfoxglove.so"
+        OUTPUT_VARIABLE _elf_arch ERROR_QUIET
+    )
+    if(_elf_arch MATCHES "v8")
+        message(STATUS "foxglove-sdk: ARMv8 arch detected ✓")
     endif()
 
-    # Collect .a and .so into prebuilt dir (explicit filenames, not GLOB)
+    set(ENV{CC}  "${_save_cc}")
+    set(ENV{CXX} "${_save_cxx}")
+    foxglove_restore_cargo_config()
+
+    # Copy .a and .so into prebuilt dir
     file(MAKE_DIRECTORY "${_prebuilt_dir}")
     set(_cargo_out "${SOURCE_PATH}/target/${_rust_target}/release")
     file(COPY "${_cargo_out}/libfoxglove.a"  DESTINATION "${_prebuilt_dir}")
@@ -69,6 +95,15 @@ if(_rust_target)
 endif()
 
 # ── Step 2: Build C++ wrapper via official CMake ─────────────────────
+
+# Native: append target-cpu to cargo config (no RUSTFLAGS, avoids
+# conflict with Corrosion's -Cembed-bitcode=no)
+if(NOT _rust_target)
+    file(APPEND "${_cargo_cfg}"
+        "\n[build]\nrustflags = [\"-C\", \"target-cpu=native\"]\n"
+    )
+    message(STATUS "foxglove-sdk: native (Corrosion), lto=fat codegen-units=1 target-cpu=native")
+endif()
 
 set(_cmake_opts
     -DFOXGLOVE_BUILD_EXAMPLES=OFF
@@ -79,13 +114,7 @@ set(_cmake_opts
     -DCMAKE_WARN_DEPRECATED=OFF
     -DFETCHCONTENT_FULLY_DISCONNECTED=OFF
     -DBUILD_TESTING=OFF
-    # GCC 16 + libwebsockets v4.3.3: -Werror in CMAKE_C_FLAGS_DEBUG overrides
-    # our -Wno-error. Override C debug+release flags to remove -Werror.
-    "-DCMAKE_C_FLAGS=${VCPKG_C_FLAGS} -Wno-error=discarded-qualifiers"
-    "-DCMAKE_C_FLAGS_DEBUG=-g -Wno-error=discarded-qualifiers"
-    "-DCMAKE_C_FLAGS_RELEASE=${VCPKG_C_FLAGS} -Wno-error=discarded-qualifiers"
 )
-
 if(_rust_target)
     list(APPEND _cmake_opts "-DFOXGLOVE_PREBUILT_LIB_DIR=${_prebuilt_dir}")
 endif()
@@ -94,6 +123,12 @@ vcpkg_cmake_configure(
     SOURCE_PATH "${SOURCE_PATH}/cpp"
     OPTIONS ${_cmake_opts}
 )
+
+# Restore cargo config after CMake configure (Corrosion reads it then)
+if(NOT _rust_target)
+    foxglove_restore_cargo_config()
+endif()
+
 vcpkg_cmake_install()
 vcpkg_cmake_config_fixup(
     PACKAGE_NAME foxglove-sdk
@@ -101,4 +136,5 @@ vcpkg_cmake_config_fixup(
 )
 
 file(REMOVE_RECURSE "${CURRENT_PACKAGES_DIR}/debug/include")
+file(REMOVE_RECURSE "${CURRENT_PACKAGES_DIR}/debug/share")
 file(INSTALL "${SOURCE_PATH}/LICENSE" DESTINATION "${CURRENT_PACKAGES_DIR}/share/${PORT}" RENAME copyright)
