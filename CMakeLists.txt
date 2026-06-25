@@ -10,6 +10,80 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # ── Options ─────────────────────────────────────────────────────────
 option(NUEDC_STATIC_LINKING "Static-link all dependencies" "$ENV{NUEDC_STATIC_LINKING}")
 option(NUEDC_ENABLE_SANITIZERS "Enable ASan/UBSan for debug builds" OFF)
+option(NUEDC_RUST_ONLY "Build only the Rust port (skip C++ and vcpkg)" OFF)
+option(NUEDC_BUILD_RUST "Build Rust port alongside C++" OFF)
+
+# ── Rust port helper (must be defined before use) ────────────────────
+function(_nuedc_add_rust_target)
+    find_program(CARGO cargo REQUIRED)
+    set(RUST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/rust")
+
+    set(RUST_CARGO_FLAGS --release)
+    if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
+        list(APPEND RUST_CARGO_FLAGS --target aarch64-unknown-linux-gnu)
+    endif()
+
+    add_custom_target(nuedc_rust ALL
+        COMMAND ${CARGO} build ${RUST_CARGO_FLAGS}
+        WORKING_DIRECTORY "${RUST_DIR}"
+        COMMENT "Building Rust port..."
+        USES_TERMINAL
+    )
+
+    if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
+        set(_rust_out "${RUST_DIR}/target/aarch64-unknown-linux-gnu/release/main")
+    else()
+        set(_rust_out "${RUST_DIR}/target/release/main")
+    endif()
+
+    install(PROGRAMS "${_rust_out}"
+        DESTINATION ${CMAKE_INSTALL_BINDIR}
+        RENAME main
+    )
+
+    # ── aarch64: bundle runtime libs + run.sh (same as C++) ──────────
+    if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
+        set(_runtime_libs "")
+        foreach(_lib ld-linux-aarch64.so.1 libc.so.6 libm.so.6 libgcc_s.so.1)
+            execute_process(
+                COMMAND ${CMAKE_C_COMPILER} -print-file-name=${_lib}
+                OUTPUT_VARIABLE _found OUTPUT_STRIP_TRAILING_WHITESPACE)
+            if(EXISTS "${_found}")
+                list(APPEND _runtime_libs "${_found}")
+            endif()
+        endforeach()
+
+        install(CODE "
+            set(_dst \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}\")
+            file(MAKE_DIRECTORY \${_dst})
+            foreach(_src ${_runtime_libs})
+                if(EXISTS \"\${_src}\")
+                    execute_process(COMMAND \${CMAKE_COMMAND} -E copy
+                        \"\${_src}\" \"\${_dst}/\")
+                endif()
+            endforeach()
+        " COMPONENT runtime)
+
+        install(CODE "
+            file(WRITE \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/run.sh\"
+\"#!/bin/sh
+DIR=\\\$(dirname \\\$(readlink -f \\\$0))
+exec \\\$DIR/../lib/ld-linux-aarch64.so.1 --library-path \\\$DIR/../lib \\\$DIR/main \\\$@
+\")
+            execute_process(COMMAND chmod +x \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/run.sh\")
+        " COMPONENT runtime)
+    endif()
+
+    message(STATUS "  Rust port         : enabled")
+endfunction()
+
+# ── Rust-only mode: skip C++ entirely ───────────────────────────────
+if(NUEDC_RUST_ONLY)
+    include(GNUInstallDirs)
+    _nuedc_add_rust_target()
+    install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/config DESTINATION .)
+    return()
+endif()
 
 # ── Compiler flags ──────────────────────────────────────────────────
 include(CheckCXXCompilerFlag)
@@ -132,6 +206,10 @@ set_target_properties(main PROPERTIES
     BUILD_RPATH "${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/lib"
     INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}"
 )
+
+if(NUEDC_BUILD_RUST)
+    _nuedc_add_rust_target()
+endif()
 
 install(TARGETS main RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/config DESTINATION .)

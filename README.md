@@ -1,125 +1,85 @@
 # NUEDC
 
-嵌入式机器人竞赛开发项目。主机端（x86-64 / aarch64）通过 USB Bulk 与下位机通信（FlatBuffers 协议），内置 Foxglove WebSocket 桥接用于实时可视化调试。
+嵌入式机器人竞赛开发项目。主机端（x86_64 / aarch64）通过 USB Bulk 与下位机通信（FlatBuffers 协议），内置 Foxglove WebSocket 桥接实时可视化。
+
+**双语言实现：C++26 和 Rust，共享同一套 config.yaml。**
 
 ## 架构
 
 ```mermaid
 graph TD
-    subgraph Host["NUEDC (x86-64 / aarch64)"]
+    subgraph Host["NUEDC Host"]
         EXEC[Executor: topological sort + spin loop]
-        VIS[VisionTest: camera + Canny]
-        CAR[Car: chassis kinematics]
-        CMD[CarCommand: throttled control]
-        MTEST[MotorTest: sine-wave test signal]
-        BRIDGE[FoxgloveBridge: WebSocket streaming]
-        ENC_L[EncoderMotor x2]
-        MOT_L[CanMotor x2]
-        IMU[Bmi088 ring-buffered AHRS]
-        TF[FastTF tree]
-        SLAVE[NuedcSlave]
-        USB_T[UsbTransport async libusb]
-
-        EXEC --> VIS
-        EXEC --> CAR
-        EXEC --> MTEST
-        EXEC --> CMD
-        EXEC --> BRIDGE
-        CAR --> ENC_L
-        CAR --> MOT_L
-        CAR --> IMU
-        CAR --> TF
-        CAR --> SLAVE
-        MTEST -->|target_speed| CMD
-        VIS -->|image/sensor| BRIDGE
-        CAR -->|velocity/IMU| BRIDGE
-        SLAVE --> USB_T
+        VIS[VisionTest: nokhwa camera + JPEG]
+        CAR[Car: USB pump + kinematics + IMU]
+        CMD[CarCommand: throttled motor write]
+        MTEST[MotorTest: sine-wave test]
+        BRIDGE[FoxgloveBridge: WebSocket]
+        SLAVE[NuedcSlave: FlatBuffers dispatch]
+        USB[UsbTransport: nusb RX thread]
+        EXEC --> VIS; EXEC --> CAR; EXEC --> MTEST; EXEC --> CMD; EXEC --> BRIDGE
+        CAR --> SLAVE; MTEST -->|target_speed| CMD
+        VIS -->|image| BRIDGE; CAR -->|velocity/IMU| BRIDGE
+        SLAVE --> USB
     end
-
     subgraph Foxglove["Foxglove Studio"]
-        PLOT[Plot Panel: velocity, IMU]
-        IMG[Image Panel: camera feed]
+        PLOT[Plot Panel]; IMG[Image Panel]
     end
-
     subgraph Firmware["nuedc_slave (STM32F723)"]
-        PID[Motor PID]
-        ENC[Encoder QDEC ISR]
-        BMI[BMI088 SPI]
-        CAN[CAN / UART / ADC]
+        PID[Motor PID]; ENC[Encoder]; BMI[BMI088]
     end
-
-    USB_T <-->|USB Bulk FlatBuffers| Firmware
-    BRIDGE -->|WebSocket ws://localhost:8765| Foxglove
-```
-
-### 数据流
-
-```mermaid
-sequenceDiagram
-    participant USB as USB bg thread
-    participant RING as rx_ring_ (SPSC)
-    participant MAIN as main thread (spin)
-    participant TX as tx_ring_ (SPSC)
-
-    USB->>RING: rx callback: decode and push
-    USB->>TX: drain_tx: pop and submit
-    MAIN->>RING: pump(): pop and dispatch
-    MAIN->>MAIN: update_status drain imu ring
-    MAIN->>TX: command_update throttled push
+    USB <-->|USB Bulk FlatBuffers| Firmware
+    BRIDGE -->|ws://localhost:8765| Foxglove
 ```
 
 ## 快速开始
 
-### 环境要求
+### 环境
 
-- **GCC 16+**（C++26 + `-freflection`）
-- **Rust** nightly（foxglove-sdk 编译 Rust C 库）
-- CMake 3.22+, Ninja, vcpkg
+- **C++**: GCC 16+ (C++26 `-freflection`), CMake 3.22+, Ninja, vcpkg
+- **Rust**: nightly 1.85+ (`flatc` for schema codegen)
+
+### 编译运行
+
+```bash
+# C++ 本机
+cmake --preset native && cmake --build build
+cmake --install build --prefix ./build/install && ./build/install/bin/main
+
+# Rust 本机
+cmake --preset rust-native && cmake --build build
+cmake --install build --prefix ./build/install && ./build/install/bin/main
+
+# C++ aarch64 交叉编译
+cmake --preset aarch64-static && cmake --build build
+cmake --install build --prefix ./build/install
+
+# Rust aarch64 交叉编译（纯 Rust，无 C/C++ 依赖）
+cmake --preset rust-aarch64 && cmake --build build
+cmake --install build --prefix ./build/install --component runtime
+
+# 部署到目标板
+scp -r build/install/* board:/opt/nuedc/
+ssh board /opt/nuedc/bin/run.sh
+```
 
 ### 预设一览
 
-| Preset | 编译器 | 链接 | 用途 |
-|--------|--------|------|------|
-| `native` | GCC 16 | 动态 | 本机开发 |
-| `native-static` | GCC 16 | 静态 | 本机单文件发布 |
-| `native-debug` | GCC 16 | 动态, -O0 | 本机调试 |
-| `clang` | Clang 22 | 动态 | Clang 开发 |
-| `clang-static` | Clang 22 | 静态 | Clang 发布 |
-| `clang-debug` | Clang 22 | 动态, -O0 | Clang 调试 |
-| `aarch64` | GCC cross | 动态 | ARM64 部署 |
-| `aarch64-static` | GCC cross | 静态 | ARM64 自包含 |
-
-### 本机开发
-
-```bash
-cmake --preset native && cmake --build build
-cmake --install build --prefix ./build/install && ./build/install/bin/main
-```
-
-### 交叉编译 aarch64（Nix）
-
-项目提供 `flake.nix`，自动配置 aarch64 GCC 16 交叉编译环境：
-
-```bash
-nix develop                          # 进入交叉编译 shell
-cmake --preset aarch64 && cmake --build build
-cmake --install build --prefix ./build/install
-
-scp -r build/install/* board:/opt/nuedc/
-ssh board /opt/nuedc/bin/main
-```
-
-Nix shell 提供：GCC 16 交叉编译器、CMake、Ninja、flatc、libusb。C++ 库由 vcpkg 管理。
+| Preset | 语言 | 架构 | 说明 |
+|--------|------|------|------|
+| `native` | C++ | x86_64 | 动态链接 |
+| `native-static` | C++ | x86_64 | 静态链接 |
+| `aarch64-static` | C++ | aarch64 | 交叉编译 + runtime bundle |
+| `rust-native` | Rust | x86_64 | 纯 Rust，0.2s configure |
+| `rust-aarch64` | Rust | aarch64 | 纯 Rust，交叉编译友好 |
 
 ### Foxglove 实时可视化
 
-内置 `FoxgloveBridge` 组件，通过 WebSocket 将组件输出转发到 [Foxglove Studio](https://foxglove.dev/)：
+1. 启动程序 → 打开 [Foxglove Studio](https://foxglove.dev/)
+2. 连接 → "Foxglove WebSocket" → `ws://localhost:8765`
+3. 左侧 channels 面板勾选数据源，拖入 Plot / Image 面板
 
-1. 启动程序后，打开 Foxglove Studio
-2. 选 "Open connection" → "Foxglove WebSocket" → `ws://localhost:8765`
-3. 左侧 channels 面板勾选数据源，拖入 Plot / Image 面板即可实时查看
-
-在 `config/config.yaml` 中配置要转发的通道：
+config.yaml 配置：
 
 ```yaml
 foxglove:
@@ -127,177 +87,132 @@ foxglove:
   port: 8765
   channels:
     /chassis/velocity: { type: double, hz: 50 }
-    /imu/gyro_x:       { type: double, hz: 100 }
+    /imu/gyro_z:       { type: double, hz: 100 }
     /vision/image:     { type: image,  hz: 30 }
 ```
 
-支持类型：`float`、`double`、`int`（标量 → Plot 面板）、`image`（cv::Mat → Image 面板）。
+支持类型：`float` `double` `int`（Plot 面板）`image`（Image 面板，JPEG → CompressedImage）。
 
 ## 项目结构
 
 ```
 NUEDC/
-├── include/
-│   ├── core/
-│   │   ├── component.hpp              # Component 基类 + Input/OutputInterface + Config
-│   │   ├── component_registry.hpp     # 反射驱动的自动注册工厂
-│   │   └── executor.hpp               # Kahn 拓扑排序 + spin-loop
-│   ├── controller/
-│   │   ├── pid/                       # PID / ErrorPID
-│   │   └── chassis/                   # 二轮差速逆运动学
-│   ├── devices/
-│   │   ├── encoder_motor.hpp          # 固件端编码器电机
-│   │   ├── can_motor.hpp              # CAN 直通电机 (DJI M3508 等)
-│   │   └── bmi088.hpp                 # IMU + Mahony AHRS (ring-buffered)
-│   ├── hardware/
-│   │   └── car.hpp                    # 差分底盘 + USB 断开检测
-│   ├── vision/
-│   │   └── vision_test.hpp            # 摄像头采集 + Canny 边缘检测 (后台线程)
-│   ├── test/
-│   │   └── motor_test.hpp             # 正弦波电机测试组件
-│   ├── usb/
-│   │   ├── protocol.hpp               # 帧协议 0x5A|size(4)|body|0xA5
-│   │   ├── usb_transport.hpp          # 异步 libusb + SPSC ring + 断开检测
-│   │   └── nuedc_slave.hpp            # NuedcSlave<Handler> FlatBuffers 协议层
-│   ├── util/
-│   │   ├── ring_buffer.hpp            # 无锁 SPSC ring buffer
-│   │   ├── throttle.hpp               # 自限频工具
-│   │   └── foxglove_bridge.hpp        # Foxglove WebSocket 桥接 (官方 SDK)
-│   └── fast_tf/                       # FastTF (GPL-3.0) 编译期 TF 树
-├── schemas/                           # FlatBuffers schema (与固件共享)
-├── config/
-│   └── config.yaml                    # 组件 + Foxglove 通道配置
-├── ports/
-│   └── foxglove-sdk/                  # foxglove-sdk vcpkg port (cargo 自定义编译)
-├── toolchains/                        # GCC / Clang 工具链
-├── triplets/                          # vcpkg 三元组 (GCC/Clang, 动静)
-├── flake.nix                          # Nix 交叉编译环境
-├── CMakePresets.json
+├── include/                    # C++ 头文件
+│   ├── core/                   # Component / Executor / Config
+│   ├── controller/             # PID / Chassis / Kalman
+│   ├── devices/                # EncoderMotor / CanMotor / Bmi088
+│   ├── hardware/               # Car + CarCommand
+│   ├── usb/                    # UsbTransport / NuedcSlave / Protocol
+│   ├── vision/                 # VisionTest (OpenCV)
+│   ├── util/                   # RingBuffer / Throttle / FoxgloveBridge
+│   ├── test/                   # MotorTest
+│   └── fast_tf/                # Compile-time TF tree
+├── src/                        # C++ 源文件
+├── schemas/                    # FlatBuffers .fbs (与固件共享)
+├── config/                     # config.yaml
+├── ports/                      # vcpkg ports (foxglove-sdk)
+├── toolchains/ triplets/       # CMake 工具链
+├── rust/                       # Rust 实现
+│   ├── build.rs                # flatc → Rust codegen
+│   ├── .cargo/config.toml      # 交叉编译配置 + LTO
+│   └── src/
+│       ├── main.rs             # 入口（YAML → registry → Executor）
+│       ├── core/               # component / executor / config
+│       ├── controller/         # PID / ChassisIk / KalmanFilter
+│       ├── devices/            # EncoderMotor / CanMotor / Bmi088 Mahony
+│       ├── hardware/           # Car + CarCommand + Handler impl
+│       ├── usb/                # nusb transport / NuedcSlave / framing
+│       ├── util/               # foxglove_bridge / ring_buffer / throttle
+│       ├── vision/             # VisionTest (nokhwa + image)
+│       ├── test/               # MotorTest
+│       └── registry.rs         # inventory 自动注册
 ├── CMakeLists.txt
+├── CMakePresets.json
 └── vcpkg.json
 ```
 
 ## 组件系统
 
-基于 C++26 反射（P2996）的自动注册。**无需宏**，只需继承 `Component` 并在 `main.cpp` 的 `register_all_components()` 中枚举命名空间。
+### C++（反射）
 
-### 写一个组件
+C++26 `-freflection` 自动发现组件，无需宏：
 
 ```cpp
-// include/my_namespace/my_component.hpp
-#pragma once
-#include "core/component.hpp"
-
 namespace nuedcs::my_namespace {
-
 class MyComponent : public core::Component {
-public:
-    MyComponent(ryml::NodeRef config) {
-        auto c = core::Config{config};
-        threshold_ = c["threshold"].get(0.5);
-        register_output("/" + name() + "/value", out_, 0.0);
-    }
-    void update() override { *out_ = compute(); }
-private:
-    OutputInterface<double> out_;
-    double threshold_;
+    MyComponent(ryml::NodeRef config) { /* ... */ }
+    void update() override { /* ... */ }
 };
-
-}  // namespace nuedcs::my_namespace
-```
-
-### 注册组件
-
-在 `main.cpp` 中添加一行命名空间枚举：
-
-```cpp
-#include "my_namespace/my_component.hpp"
-
-void register_all_components() {
-    // ... 已有命名空间 ...
-    nuedcs::core::register_namespace_components<^^nuedcs::my_namespace>();
 }
 ```
 
-反射自动完成：
-1. `std::meta::members_of(^^ns)` 枚举命名空间所有成员
-2. `std::meta::is_class_type` + `!is_abstract_type` 过滤具体类
-3. `std::is_base_of_v<Component, T>` 确认继承关系
-4. `std::meta::identifier_of(^^T)` 编译期提取类名作为注册键
-
-### 配置访问
-
 ```cpp
-auto c = core::Config{config};           // thin wrapper over ryml
-auto v  = c["key"].get<double>(3.14);    // warns if key missing
-auto s  = c["path"]["to"]["key"].str();  // nested, warns at each missing level
+// main.cpp — 只需一行命名空间枚举
+nuedcs::core::register_namespace_components<^^nuedcs::my_namespace>();
 ```
 
-### Partner 组件
+### Rust（inventory 自动注册）
 
-```cpp
-class Car : public core::Component {
-    Car(ryml::NodeRef config)
-        : command_(create_partner_component<CarCommand>(name() + "_command", *this)) {
-        register_output(name() + "/_car_sync", sync_out_, true);  // explicit dependency
-    }
-private:
-    class CarCommand : public core::Component {
-        void update() override { car_.command_update(); }
-        Car& car_;
-        InputInterface<bool> sync_in_;
-    };
-    CarCommand* command_;
-};
+组件文件末尾加一行 `register_component!`，`inventory` crate 在链接期收集：
+
+```rust
+impl Component for MyComponent { /* ... */ }
+
+register_component!(MyComponent::from_yaml, "nuedcs::my::MyComponent");
 ```
+
+`main.rs` 不写 match 分支，新组件零侵入：
+
+```rust
+let comp = registry::create_component(type_name, instance_name, config)?;
+exec.add(comp);
+```
+
+## 依赖对比
+
+| | C++（静态链接） | Rust |
+|------|---------|------|
+| 序列化 | flatbuffers C++ | flatbuffers Rust |
+| YAML | ryml | serde_yaml |
+| 日志 | spdlog | log + env_logger |
+| 数学 | Eigen3 | nalgebra |
+| 摄像头 | OpenCV (C++) | **nokhwa** + **image** (纯 Rust) |
+| USB | libusb (C) | **nusb** (纯 Rust) |
+| WebSocket | foxglove-sdk (Rust→C) | foxglove (纯 Rust) |
+| 编译发现 | `-freflection`（编译器内置） | **inventory** (链接期收集) |
+| 产物大小 | 16 MB | **3.6 MB** |
+
+Rust 版全依赖纯 Rust，x86_64 和 aarch64 交叉编译只需一行 `--target`，无 pkg-config / vcpkg 特殊处理。
+
+## 线程模型
+
+```
+USB bg thread                    main thread (spin loop)
+    │                                │
+    ├─ nusb read_bulk(1ms) ──► rx_ring (SPSC)
+    ├─ 0x5A decode                                  │
+    │                                ├─ slave.pump() → dispatch
+    │                                ├─ devices update_status
+    │                                ├─ kinematics + AHRS
+    │                                └─ FoxgloveBridge log
+    │                                │
+    ├─◄── tx_ring (SPSC) ◄── command_update (throttled)
+```
+
+全 lock-free：`RingBuffer` (SPSC) + `AtomicBool`，零 mutex。
 
 ## 设备驱动
-
 
 ```
 store_xxx(raw)  ──►  update_status()  ──►  generate_command()
 (USB 回调)          (主循环)               (主循环, throttled)
- atomic/ring push   load → convert         read InputInterface → raw cmd
+ atomic/ring push   load → convert         read Input → raw cmd
 ```
 
-```cpp
-// Bmi088 — ring-buffered, 不漏数据
-imu_.store_sample(ax, ay, az, gx, gy, gz);  // USB 回调
-imu_.update_status();                        // 主循环 drain ring → AHRS
+- **Bmi088** — ring-buffered, drain all samples through Mahony AHRS
+- **EncoderMotor** — firmware-computed velocity, atomic store
+- **CanMotor** — NaN priority: angle > velocity > torque, DJI + LK protocol
 
-// EncoderMotor — 固件已算好速度
-enc.store_velocity(12.5f);                   // USB 回调, 直接存
-enc.update_status();                         // publish output
+## License
 
-// CanMotor — NaN 优先级 angle > velocity > torque
-motor.store_status(can_8bytes);
-motor.update_status();
-uint64_t cmd = motor.generate_command();
-```
-
-## 线程模型
-
-```mermaid
-flowchart LR
-    subgraph MAIN["main thread spin"]
-        UPD[Component update]
-        PUMP[slave pump]
-        DEV[device update_status]
-        CMD2[throttled command_update]
-    end
-
-    subgraph BG["USB bg thread"]
-        RX[rx done and decode]
-        TXD[tx done and drain]
-    end
-
-    subgraph RINGS["lock-free SPSC"]
-        RXQ[rx_ring_]
-        TXQ[tx_ring_]
-    end
-
-    BG -->|push| RXQ -->|pop| MAIN
-    MAIN -->|push| TXQ -->|pop| BG
-```
-
-全 lock-free：`RingBuffer` (SPSC) + `std::atomic`，零 mutex。
+MIT

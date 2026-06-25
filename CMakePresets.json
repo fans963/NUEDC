@@ -92,6 +92,29 @@
                 "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
                 "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/toolchains/aarch64-gcc16.toolchain.cmake"
             }
+        },
+        {
+            "name": "rust-native",
+            "displayName": "Rust (x86_64, release)",
+            "description": "Build Rust port only — no C++ / vcpkg",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "NUEDC_RUST_ONLY": "ON"
+            }
+        },
+        {
+            "name": "rust-aarch64",
+            "displayName": "Rust (aarch64, release)",
+            "description": "Cross-compile Rust port for aarch64 — pure Rust, no C/C++ deps",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "NUEDC_RUST_ONLY": "ON"
+            },
+            "toolchainFile": "${sourceDir}/toolchains/aarch64-gcc16.toolchain.cmake"
         }
     ],
     "buildPresets": [
@@ -118,6 +141,14 @@
         {
             "name": "aarch64-debug",
             "configurePreset": "aarch64-debug"
+        },
+        {
+            "name": "rust-native",
+            "configurePreset": "rust-native"
+        },
+        {
+            "name": "rust-aarch64",
+            "configurePreset": "rust-aarch64"
         }
     ]
 }
