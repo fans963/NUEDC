@@ -46,6 +46,7 @@ public:
         register_output("/vision/frame_width", out_width_, 0);
         register_output("/vision/frame_height", out_height_, 0);
         register_output("/vision/edge_count", out_edges_, 0);
+        register_output("/vision/image", out_image_);
     }
 
     ~VisionTest() override {
@@ -77,16 +78,20 @@ public:
         *out_width_  = latest_width_;
         *out_height_ = latest_height_;
         *out_edges_  = latest_edges_;
+        *out_image_  = latest_image_.clone();  // 深拷贝给 bridge
     }
 
 private:
     void capture_loop() {
+        static int frame_ok = 0, frame_fail = 0;
         while (running_.load(std::memory_order_relaxed)) {
             cv::Mat frame;
             if (!cap_.read(frame) || frame.empty()) {
-                warn("Failed to read frame");
+                if (++frame_fail == 1) warn("Failed to read frame (first)");
                 continue;
             }
+            if (++frame_ok == 1)
+                info("First frame captured: {}x{} ch={}", frame.cols, frame.rows, frame.channels());
 
             cv::Mat gray, blurred, edges;
             cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
@@ -103,6 +108,7 @@ private:
                 latest_width_  = w;
                 latest_height_ = h;
                 latest_edges_  = e;
+                latest_image_  = frame.clone();  // 深拷贝
             }
         }
     }
@@ -124,10 +130,12 @@ private:
     int latest_width_  = 0;
     int latest_height_ = 0;
     int latest_edges_  = 0;
+    cv::Mat latest_image_;
 
     OutputInterface<int> out_width_;
     OutputInterface<int> out_height_;
     OutputInterface<int> out_edges_;
+    OutputInterface<cv::Mat> out_image_;
 };
 
 } // namespace nuedcs::vision

@@ -50,6 +50,7 @@ find_package(flatbuffers CONFIG REQUIRED)
 find_package(hfsm2 CONFIG REQUIRED)
 find_package(magic_enum CONFIG REQUIRED)
 find_package(mimalloc CONFIG REQUIRED)
+find_package(foxglove-sdk CONFIG QUIET)
 
 # libusb: prefer pkg-config, fallback to find_library
 find_package(PkgConfig QUIET)
@@ -117,6 +118,13 @@ elseif(LIBUSB_FOUND)
     target_compile_definitions(main PRIVATE NUEDC_HAS_LIBUSB=1)
 endif()
 
+# Foxglove WebSocket bridge
+if(TARGET foxglove-sdk::foxglove_cpp_static)
+    target_link_libraries(main PRIVATE foxglove-sdk::foxglove_cpp_static)
+else()
+    target_link_libraries(main PRIVATE foxglove-sdk::foxglove_cpp_shared)
+endif()
+
 # ── Install ─────────────────────────────────────────────────────────
 include(GNUInstallDirs)
 
@@ -169,6 +177,14 @@ if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
     endif()
     if(EXISTS "${_libgcc}")
         list(APPEND _runtime_libs "${_libgcc}")
+    endif()
+
+    # libatomic (required by foxglove-sdk / Rust)
+    execute_process(
+        COMMAND ${CMAKE_CXX_COMPILER} -print-file-name=libatomic.so.1
+        OUTPUT_VARIABLE _libatomic OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(EXISTS "${_libatomic}")
+        list(APPEND _runtime_libs "${_libatomic}")
     endif()
 
     install(CODE "

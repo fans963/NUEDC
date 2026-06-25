@@ -22,8 +22,10 @@
         "eigen",
         "imgproc",
         "imgcodecs",
+        "jpeg",
         "videoio"
       ]
-    }
+    },
+    "foxglove-sdk"
   ]
 }

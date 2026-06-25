@@ -71,10 +71,11 @@ public:
         // DFS 拓扑排序 + 打印树形依赖链
         updating_order_.clear();
         depth_ = 0;
+        std::unordered_set<Component*> visited;
 
         spdlog::info("[Executor] ── Dependency chain ──────────────────────");
         for (auto& c : components_) {
-            if (c->dep_count_ == 0) append_order(c.get());
+            if (c->dep_count_ == 0) append_order(c.get(), visited);
         }
         spdlog::info("[Executor] ────────────────────────────────────────");
 
@@ -182,19 +183,19 @@ public:
     [[nodiscard]] const std::vector<std::unique_ptr<Component>>& components() const { return components_; }
 
 private:
-    void append_order(Component* comp)
+    void append_order(Component* comp, std::unordered_set<Component*>& visited)
     {
+        if (!visited.insert(comp).second) return;  // 已访问，跳过（防重复）
+
         std::string indent(depth_ * 4, ' ');
-        spdlog::info("[Executor]   - {}{}", indent, comp->name());
+        spdlog::info("[Executor] {}- {}", indent, comp->name());
         updating_order_.push_back(comp);
 
-        for (auto& c : components_) {
-            if (comp->wanted_by_.contains(c.get())) {
-                if (--c->dep_count_ == 0) {
-                    depth_++;
-                    append_order(c.get());
-                    depth_--;
-                }
+        for (auto* child : comp->wanted_by_) {
+            if (--child->dep_count_ == 0) {
+                depth_++;
+                append_order(child, visited);
+                depth_--;
             }
         }
     }

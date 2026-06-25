@@ -2,6 +2,7 @@ components:
   - nuedcs::vision::VisionTest -> vision
   - nuedcs::hardware::Car -> car
   - nuedcs::test::MotorTest -> motor_test
+  - nuedcs::util::FoxgloveBridge -> foxglove
   
 vision:
   device: 0
@@ -15,3 +16,17 @@ vision:
 car:
   pid: 0x0963
   vid: 0x1209
+
+foxglove:
+  host: "0.0.0.0"
+  port: 8765
+  channels:
+    /chassis/velocity: { type: double, hz: 50 }
+    /chassis/yaw_rate: { type: double, hz: 50 }
+    /imu/accel_x: { type: double, hz: 100 }
+    /imu/accel_y: { type: double, hz: 100 }
+    /imu/accel_z: { type: double, hz: 100 }
+    /imu/gyro_x: { type: double, hz: 100 }
+    /imu/gyro_y: { type: double, hz: 100 }
+    /imu/gyro_z: { type: double, hz: 100 }
+    /vision/image: { type: image, hz: 60 }

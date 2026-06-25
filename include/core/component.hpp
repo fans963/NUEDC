@@ -154,6 +154,7 @@ public:
         }
         [[nodiscard]] bool active() const { return act_; }
         [[nodiscard]] bool ready() const { return p_ != nullptr; }
+        [[nodiscard]] void* raw_ptr() const { return static_cast<void*>(p_); }
         template <typename... Args>
         void make_and_bind_directly(Args&&... a) {
             if (ready()) throw std::runtime_error("already bound");

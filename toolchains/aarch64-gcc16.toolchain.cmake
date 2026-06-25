@@ -27,7 +27,10 @@ endif()
 add_compile_options(
     -march=armv8.2-a+crypto+fp16+dotprod+rdma+lse+rcpc
     -mtune=cortex-a76
-    -std=gnu++26 -freflection
+    "$<$<COMPILE_LANGUAGE:CXX>:-std=gnu++26>"
+    "$<$<COMPILE_LANGUAGE:CXX>:-freflection>"
+    # GCC 16 with libwebsockets v4.3.3: suppress const-qualifier Werror
+    "$<$<COMPILE_LANGUAGE:C>:-Wno-error=discarded-qualifiers>"
 )
 
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)

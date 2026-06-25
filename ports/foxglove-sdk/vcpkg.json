@@ -1,0 +1,23 @@
+{
+  "name": "foxglove-sdk",
+  "version": "0.25.3",
+  "description": "Foxglove SDK — WebSocket server and MCAP writer for visualization",
+  "homepage": "https://github.com/foxglove/foxglove-sdk",
+  "license": "MIT",
+  "dependencies": [
+    "vcpkg-cmake",
+    "vcpkg-cmake-config",
+    {
+      "name": "catch2",
+      "default-features": false
+    },
+    {
+      "name": "libwebsockets",
+      "default-features": false
+    },
+    {
+      "name": "nlohmann-json",
+      "default-features": false
+    }
+  ]
+}
