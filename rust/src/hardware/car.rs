@@ -3,7 +3,7 @@
 
 use crate::controller::ChassisIk;
 use crate::core::component::{Component, Input, InputDecl, Output, OutputDecl};
-use crate::devices::{Bmi088, CanMotor, CanMotorConfig, EncoderMotor, MotorType};
+use crate::devices::{Bmi088, CanMotor, EncoderMotor};
 use crate::register;
 use crate::register_component;
 use crate::usb::nuedc_slave::{Handler, NuedcSlave};
@@ -33,22 +33,8 @@ impl CarCommand {
             throttle: Throttle::new(1000.0),
             enc_left: EncoderMotor::new(0),
             enc_right: EncoderMotor::new(1),
-            can_left: CanMotor::new(
-                0x201,
-                CanMotorConfig {
-                    motor_type: MotorType::M3508,
-                    reduction_ratio: 19.0,
-                    reversed: true,
-                },
-            ),
-            can_right: CanMotor::new(
-                0x202,
-                CanMotorConfig {
-                    motor_type: MotorType::M3508,
-                    reduction_ratio: 19.0,
-                    reversed: false,
-                },
-            ),
+            can_left: CanMotor::new(0x201),
+            can_right: CanMotor::new(0x202),
         }
     }
 }
@@ -123,22 +109,8 @@ impl Car {
             q3: Output::new("/imu/q3", 0.0),
             enc_left: EncoderMotor::new(0),
             enc_right: EncoderMotor::new(1),
-            can_left: CanMotor::new(
-                0x201,
-                CanMotorConfig {
-                    motor_type: MotorType::M3508,
-                    reduction_ratio: 19.0,
-                    reversed: true,
-                },
-            ),
-            can_right: CanMotor::new(
-                0x202,
-                CanMotorConfig {
-                    motor_type: MotorType::M3508,
-                    reduction_ratio: 19.0,
-                    reversed: false,
-                },
-            ),
+            can_left: CanMotor::new(0x201),
+            can_right: CanMotor::new(0x202),
             imu: Bmi088::new(1000.0, 0.2, 0.0),
             chassis: ChassisIk::new(0.20, 0.05),
             slave: None,

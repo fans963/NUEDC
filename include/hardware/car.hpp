@@ -77,11 +77,6 @@ public:
         , imu_(Bmi088<>::Config { }.set_sample_freq(1000).set_kp(0.2))
         , slave_(*this, core::Config { config }["vid"].get<uint16_t>(0x1209),
               core::Config { config }["pid"].get<uint16_t>(0x0001)) {
-        left_motor_.configure(
-            CanMotor::Config { CanMotor::Type::kM3508 }.set_reduction_ratio(19.0).set_reversed());
-        right_motor_.configure(
-            CanMotor::Config { CanMotor::Type::kM3508 }.set_reduction_ratio(19.0));
-
         left_encoder_.configure(EncoderMotor::Config { }.set_lines_per_rev(11));
         right_encoder_.configure(EncoderMotor::Config { }.set_lines_per_rev(11));
 
