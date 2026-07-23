@@ -1,9 +1,9 @@
 components:
-  - nuedcs::vision::VisionTest -> vision
-  - nuedcs::hardware::Car -> car
-  - nuedcs::test::MotorTest -> motor_test
+  # - nuedcs::vision::VisionTest -> vision
+  - nuedcs::controller::gimbal::GimbalController -> gimbal
+  - nuedcs::test::GimbalMotorTest -> gimbal_motor_test
   - nuedcs::util::FoxgloveBridge -> foxglove
-  
+
 vision:
   device: 0
   width: 640
@@ -11,22 +11,33 @@ vision:
   canny_low: 50
   canny_high: 150
   blur_ksize: 5
-  save_path: ""  # 设路径如 "/tmp/edges.png" 可保存边缘图
+  save_path: "" # 设路径如 "/tmp/edges.png" 可保存边缘图
 
 car:
   pid: 0x0963
   vid: 0x1209
 
+gimbal:
+  port: "/dev/ttyACM0"
+  baudrate: 115200
+  cmd_hz: 1000
+  status_hz: 1000
+
+gimbal_motor_test:
+  target_angle_yaw: 0.0
+  target_angle_pitch: 0.0
+  enable_delay_ms: 200
+
 foxglove:
   host: "0.0.0.0"
   port: 8765
   channels:
-    /chassis/velocity: { type: double, hz: 50 }
-    /chassis/yaw_rate: { type: double, hz: 50 }
-    /imu/accel_x: { type: double, hz: 100 }
-    /imu/accel_y: { type: double, hz: 100 }
-    /imu/accel_z: { type: double, hz: 100 }
-    /imu/gyro_x: { type: double, hz: 100 }
-    /imu/gyro_y: { type: double, hz: 100 }
-    /imu/gyro_z: { type: double, hz: 100 }
-    /vision/image: { type: image, hz: 60 }
+    # /chassis/velocity: { type: double, hz: 50 }
+    # /chassis/yaw_rate: { type: double, hz: 50 }
+    # /imu/accel_x: { type: double, hz: 100 }
+    # /imu/accel_y: { type: double, hz: 100 }
+    # /imu/accel_z: { type: double, hz: 100 }
+    # /imu/gyro_x: { type: double, hz: 100 }
+    # /imu/gyro_y: { type: double, hz: 100 }
+    # /imu/gyro_z: { type: double, hz: 100 }
+    # /vision/image: { type: image, hz: 60 }

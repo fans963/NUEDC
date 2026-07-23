@@ -122,22 +122,10 @@ find_package(spdlog CONFIG REQUIRED)
 find_package(ryml CONFIG REQUIRED)
 find_package(flatbuffers CONFIG REQUIRED)
 find_package(hfsm2 CONFIG REQUIRED)
-find_package(magic_enum CONFIG REQUIRED)
 find_package(mimalloc CONFIG REQUIRED)
 find_package(foxglove-sdk CONFIG QUIET)
-
-# libusb: prefer pkg-config, fallback to find_library
-find_package(PkgConfig QUIET)
-if(PKG_CONFIG_FOUND)
-    pkg_check_modules(LIBUSB QUIET IMPORTED_TARGET libusb-1.0)
-endif()
-if(NOT LIBUSB_FOUND)
-    find_library(LIBUSB_LIBRARIES usb-1.0)
-    find_path(LIBUSB_INCLUDE_DIRS libusb.h PATH_SUFFIXES libusb-1.0)
-    if(LIBUSB_LIBRARIES AND LIBUSB_INCLUDE_DIRS)
-        set(LIBUSB_FOUND TRUE)
-    endif()
-endif()
+find_package(cserialport CONFIG REQUIRED)
+find_package(re2 CONFIG REQUIRED)
 
 # ── FlatBuffers code generation ─────────────────────────────────────
 set(FBS_GENERATED_DIR ${CMAKE_BINARY_DIR}/generated)
@@ -178,19 +166,11 @@ target_link_libraries(main PRIVATE
     ryml::ryml
     flatbuffers::flatbuffers
     hfsm2::hfsm2
-    magic_enum::magic_enum
     $<IF:$<TARGET_EXISTS:mimalloc-static>,mimalloc-static,mimalloc>
 )
 
-# libusb
-if(TARGET PkgConfig::LIBUSB)
-    target_link_libraries(main PRIVATE PkgConfig::LIBUSB)
-    target_compile_definitions(main PRIVATE NUEDC_HAS_LIBUSB=1)
-elseif(LIBUSB_FOUND)
-    target_include_directories(main PRIVATE ${LIBUSB_INCLUDE_DIRS})
-    target_link_libraries(main PRIVATE ${LIBUSB_LIBRARIES})
-    target_compile_definitions(main PRIVATE NUEDC_HAS_LIBUSB=1)
-endif()
+target_include_directories(main PRIVATE ${CSerialPort_INCLUDE_DIR})
+target_link_libraries(main PRIVATE ${CSerialPort_LIBRARY} re2::re2)
 
 # Foxglove WebSocket bridge
 if(TARGET foxglove-sdk::foxglove_cpp_static)
@@ -295,6 +275,5 @@ message(STATUS "  Static linking   : ${NUEDC_STATIC_LINKING}")
 message(STATUS "  Sanitizers       : ${NUEDC_ENABLE_SANITIZERS}")
 message(STATUS "  Reflection       : ${HAS_FREFLECTION}")
 message(STATUS "  OpenCV           : ${OpenCV_VERSION} (${OpenCV_LIBS})")
-message(STATUS "  libusb           : ${LIBUSB_FOUND}")
 message(STATUS "  Sysroot          : ${CMAKE_SYSROOT}")
 message(STATUS "====================================================")

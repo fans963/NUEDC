@@ -6,13 +6,10 @@
     "spdlog",
     "ryml",
     "hfsm2",
-    "magic-enum",
     "mimalloc",
     "flatbuffers",
-    {
-      "name": "libusb",
-      "default-features": false
-    },
+    "cserialport",
+    "re2",
     {
       "name": "opencv5",
       "default-features": false,

@@ -1,14 +1,11 @@
 #include "mimalloc-new-delete.h"
 #include "mimalloc-override.h"
 
-// 组件头文件必须在 executor.hpp 之前 include，
-// 这样 register_namespace_components() 才能通过反射发现它们。
-#include "hardware/car.hpp"
 #include "controller/pid/pid_controller.hpp"
 #include "controller/pid/error_pid_controller.hpp"
-#include "controller/chassis/chassis_controller.hpp"
+#include "controller/gimbal/gimbal_controller.hpp"
+#include "test/gimbal_motor_test.hpp"
 #include "vision/vision_test.hpp"
-#include "test/motor_test.hpp"
 #include "util/foxglove_bridge.hpp"
 
 #include "core/executor.hpp"
@@ -27,10 +24,9 @@
 // No macro, no per-component boilerplate — just list the namespaces.
 
 void register_all_components() {
-    nuedcs::core::register_namespace_components<^^nuedcs::hardware>();
     nuedcs::core::register_namespace_components<^^nuedcs::controller::pid>();
-    nuedcs::core::register_namespace_components<^^nuedcs::controller::chassis>();
     nuedcs::core::register_namespace_components<^^nuedcs::vision>();
+    nuedcs::core::register_namespace_components<^^nuedcs::controller::gimbal>();
     nuedcs::core::register_namespace_components<^^nuedcs::test>();
     nuedcs::core::register_namespace_components<^^nuedcs::util>();
 }
