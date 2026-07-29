@@ -1,0 +1,5 @@
+# Gimbal USB CDC (STMicroelectronics Virtual COM Port)
+# VID:PID = 0483:5740
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", MODE="0666", SYMLINK+="gimbal"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="5678", ATTRS{idProduct}=="1234", MODE="0666", SYMLINK+="chassis"
+

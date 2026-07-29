@@ -5,9 +5,11 @@
 #include "controller/pid/error_pid_controller.hpp"
 #include "controller/gimbal/gimbal_controller.hpp"
 #include "test/gimbal_motor_test.hpp"
+#include "test/slave_link_test.hpp"
 #include "vision/vision_test.hpp"
 #include "util/foxglove_bridge.hpp"
 
+#include "communication/slave_link.hpp"
 #include "core/executor.hpp"
 
 #include <spdlog/spdlog.h>
@@ -29,6 +31,7 @@ void register_all_components() {
     nuedcs::core::register_namespace_components<^^nuedcs::controller::gimbal>();
     nuedcs::core::register_namespace_components<^^nuedcs::test>();
     nuedcs::core::register_namespace_components<^^nuedcs::util>();
+    nuedcs::core::register_namespace_components<^^nuedcs::communication>();
 }
 
 int main()

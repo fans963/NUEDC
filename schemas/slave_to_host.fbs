@@ -1,1 +1,8 @@
 namespace Protocol.SlaveToHost;
+
+table SpeedTelemetry {
+    left:  float;   // m/s
+    right: float;   // m/s
+}
+
+root_type SpeedTelemetry;
